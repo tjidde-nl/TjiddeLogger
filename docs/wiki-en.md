@@ -12,7 +12,7 @@
 8. [Exception Formatting](#exception-formatting)
 9. [Scopes](#scopes)
 10. [Metrics Log Level](#metrics-log-level)
-11. [Azure Pipeline / CI-CD](#azure-pipeline--ci-cd)
+11. [CI/CD (GitHub Actions)](#cicd-github-actions)
 12. [Future Work](#future-work)
 
 ---
@@ -497,22 +497,38 @@ var metricsLevel = MetricsLoggerExtensions.Metrics; // (LogLevel)10
 
 ---
 
-## Azure Pipeline / CI-CD
+## CI/CD (GitHub Actions)
 
-An `azure-pipelines.yml` file is included in the repository root. It provides a three-stage pipeline:
+Two workflows live in `.github/workflows/`:
 
-| Stage | Description |
-|---|---|
-| **Build** | Builds and runs all tests across .NET 7, 8, 9, and 10 in a matrix. |
-| **Pack** | Produces a multi-target `.nupkg` and symbols package. |
-| **Push** | Pushes the package to a Nexus NuGet repository (only on `main` or `v*` tags). |
+| Workflow | Runs on | What it does |
+|---|---|---|
+| `ci.yml` | Every push to `main` and every pull request | Builds the solution, runs the tests, packs the NuGet package and uploads it as a build artifact. |
+| `publish.yml` | Pushing a version tag such as `v1.2.3` | Builds and tests with the version from the tag, then publishes the package and its symbols package (`.snupkg`) to nuget.org. |
 
-### Required Azure DevOps setup
+Publishing uses [NuGet Trusted Publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing). GitHub proves to nuget.org which repository and workflow is publishing, and receives an API key that is valid for one hour. No long-lived API key is stored anywhere.
 
-1. Create a **NuGet service connection** named `Nexus-NuGet` pointing to your Nexus hosted NuGet repository URL.
-2. Add pipeline variables:
-   - `NEXUS_URL` — e.g. `https://nexus.example.com/repository/nuget-hosted/`
-   - `NEXUS_API_KEY` — mark as **secret**.
+### One-time setup
+
+1. On nuget.org, open your account menu, choose **Trusted Publishing** and add a policy:
+   - **Repository Owner:** `tjidde-nl`
+   - **Repository:** `TjiddeLogger`
+   - **Workflow File:** `publish.yml`
+   - **Environment:** leave empty
+
+   If the form asks for scopes, allow both new packages and new versions (for example with the glob `Tjidde.*`): the first release creates the `Tjidde.Logging` package.
+2. In the GitHub repository, go to **Settings → Secrets and variables → Actions** and add a repository secret `NUGET_USER` with your nuget.org username (your profile name, not your email address).
+
+For a private repository the policy is first active for 7 days only. It becomes permanent after the first successful publish.
+
+### Releasing a version
+
+```bash
+git tag v1.0.4
+git push origin v1.0.4
+```
+
+The tag sets the package version: `v1.0.4` publishes `1.0.4`, and pre-releases such as `v1.1.0-beta.1` work too. The `<Version>` in the `.csproj` only applies to local builds. Publishing a version that already exists on nuget.org is skipped instead of failing.
 
 ---
 
@@ -521,7 +537,6 @@ An `azure-pipelines.yml` file is included in the repository root. It provides a 
 The following improvements and features are planned or considered for future releases:
 
 - **File sink** — Write log output to rolling log files in addition to the console.
-- **Async/buffered writing** — Non-blocking console writes to avoid I/O overhead on high-throughput services.
 - **Redaction audit log** — Optionally emit a separate audit entry listing which fields were redacted, for compliance scenarios.
 - **Custom sensitive key providers** — Allow injecting `ISensitiveKeyProvider` implementations so keys can be loaded from configuration or a secrets store at runtime.
 - **NuGet package signing** — Sign the NuGet package in the pipeline for supply-chain security.

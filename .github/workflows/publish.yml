@@ -1,0 +1,67 @@
+# Publishes to nuget.org when a version tag such as v1.2.3 is pushed.
+# Uses NuGet Trusted Publishing: no API key is stored, see docs/wiki-en.md (CI/CD) for the one-time setup.
+name: Publish to NuGet
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build, test and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # lets NuGet/login exchange GitHub's OIDC token for a temporary nuget.org API key
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Read version from tag
+        id: version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' is not a version tag such as v1.2.3 or v1.2.3-beta.1"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Restore
+        run: dotnet restore TjiddeLogger.sln
+
+      - name: Build
+        run: dotnet build TjiddeLogger.sln --configuration Release --no-restore -p:Version=${{ steps.version.outputs.version }} -p:ContinuousIntegrationBuild=true
+
+      - name: Test
+        run: dotnet test tests/Tjidde.Logging.Tests/Tjidde.Logging.Tests.csproj --configuration Release --no-build
+
+      - name: Pack
+        run: >-
+          dotnet pack src/Tjidde.Logging/Tjidde.Logging.csproj --configuration Release --no-build --output artifacts
+          -p:Version=${{ steps.version.outputs.version }} --include-symbols -p:SymbolPackageFormat=snupkg
+
+      # Request the temporary API key right before pushing: it is valid for one hour
+      - name: NuGet login (OIDC to temporary API key)
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Push to nuget.org
+        run: >-
+          dotnet nuget push "artifacts/*.nupkg"
+          --api-key "${{ steps.login.outputs.NUGET_API_KEY }}"
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate

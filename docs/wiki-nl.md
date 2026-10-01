@@ -12,7 +12,7 @@
 8. [Uitzonderingsopmaak](#uitzonderingsopmaak)
 9. [Scopes](#scopes)
 10. [Metrics logniveau](#metrics-logniveau)
-11. [Azure Pipeline / CI-CD](#azure-pipeline--ci-cd)
+11. [CI/CD (GitHub Actions)](#cicd-github-actions)
 12. [Toekomstige ontwikkelingen](#toekomstige-ontwikkelingen)
 
 ---
@@ -37,7 +37,7 @@ Installeer het NuGet-pakket:
 
 ```bash
 dotnet add package Tjidde.Logging
-```[Tjidde.Logging.csproj](../src/Tjidde.Logging/Tjidde.Logging.csproj)
+```
 
 Of voeg het handmatig toe aan uw `.csproj`:
 
@@ -497,22 +497,38 @@ var metricsLevel = MetricsLoggerExtensions.Metrics; // (LogLevel)10
 
 ---
 
-## Azure Pipeline / CI-CD
+## CI/CD (GitHub Actions)
 
-Een `azure-pipelines.yml`-bestand is opgenomen in de hoofdmap van de repository. Het biedt een drietraps-pipeline:
+In `.github/workflows/` staan twee workflows:
 
-| Fase | Beschrijving |
-|---|---|
-| **Build** | Bouwt en voert alle tests uit voor .NET 7, 8, 9 en 10 in een matrix. |
-| **Pack** | Produceert een multi-target `.nupkg` en symbolenpakket. |
-| **Push** | Pusht het pakket naar een Nexus NuGet-repository (alleen op `main` of `v*`-tags). |
+| Workflow | Draait bij | Wat het doet |
+|---|---|---|
+| `ci.yml` | Elke push naar `main` en elke pull request | Bouwt de solution, draait de tests, maakt het NuGet-pakket en bewaart het als build-artefact. |
+| `publish.yml` | Het pushen van een versietag zoals `v1.2.3` | Bouwt en test met de versie uit de tag en publiceert daarna het pakket en het symbolenpakket (`.snupkg`) op nuget.org. |
 
-### Vereiste Azure DevOps-instellingen
+Publiceren gebeurt met [NuGet Trusted Publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing). GitHub bewijst aan nuget.org welke repository en workflow publiceert, en krijgt een API-sleutel terug die één uur geldig is. Er wordt nergens een vaste API-sleutel opgeslagen.
 
-1. Maak een **NuGet-serviceverbinding** aan met de naam `Nexus-NuGet` die verwijst naar de URL van uw Nexus NuGet-repository.
-2. Voeg pipelinevariabelen toe:
-   - `NEXUS_URL` — bijv. `https://nexus.example.com/repository/nuget-hosted/`
-   - `NEXUS_API_KEY` — markeer als **geheim**.
+### Eenmalige instelling
+
+1. Open op nuget.org je accountmenu, kies **Trusted Publishing** en voeg een policy toe:
+   - **Repository Owner:** `tjidde-nl`
+   - **Repository:** `TjiddeLogger`
+   - **Workflow File:** `publish.yml`
+   - **Environment:** leeg laten
+
+   Vraagt het formulier om scopes, sta dan zowel nieuwe pakketten als nieuwe versies toe (bijvoorbeeld met het patroon `Tjidde.*`): de eerste release maakt het pakket `Tjidde.Logging` aan.
+2. Ga in de GitHub-repository naar **Settings → Secrets and variables → Actions** en voeg een repository-secret `NUGET_USER` toe met je gebruikersnaam op nuget.org (je profielnaam, niet je e-mailadres).
+
+Bij een privérepository is de policy eerst maar 7 dagen actief. Na de eerste geslaagde publicatie wordt hij permanent.
+
+### Een versie uitbrengen
+
+```bash
+git tag v1.0.4
+git push origin v1.0.4
+```
+
+De tag bepaalt de pakketversie: `v1.0.4` publiceert `1.0.4`, en pre-releases zoals `v1.1.0-beta.1` werken ook. De `<Version>` in de `.csproj` geldt alleen voor lokale builds. Een versie die al op nuget.org staat, wordt overgeslagen in plaats van dat de workflow faalt.
 
 ---
 
@@ -521,10 +537,6 @@ Een `azure-pipelines.yml`-bestand is opgenomen in de hoofdmap van de repository.
 De volgende verbeteringen en functies zijn gepland of worden overwogen voor toekomstige releases:
 
 - **Bestandssink** — Loguitvoer wegschrijven naar roterende logbestanden naast de console.
-- **Gestructureerde / JSON-uitvoermodus** — Optionele JSON-formatter voor logaggregators zoals Elasticsearch, Seq of Azure Monitor.
-- **Minimaal logniveau per categorie** — Verschillende minimumniveaus configureren per namespace of klasse, vergelijkbaar met `appsettings.json`-logfilters.
-- **`appsettings.json`-integratie** — `TjiddeLoggerOptions` rechtstreeks lezen uit configuratiesecties, zodat geen codewijzigingen nodig zijn om instellingen per omgeving aan te passen.
-- **Asynchroon/gebufferd schrijven** — Niet-blokkerende consoleschrijfacties om I/O-overhead bij services met hoge doorvoer te vermijden.
 - **Redactie-auditlog** — Optioneel een aparte auditmelding uitsturen met de lijst van gemaskeerde velden, voor compliancescenario's.
 - **Aangepaste gevoelige-sleutelproviders** — Het injecteren van `ISensitiveKeyProvider`-implementaties toestaan, zodat sleutels tijdens runtime uit configuratie of een secrets store kunnen worden geladen.
 - **NuGet-pakketondertekening** — Het NuGet-pakket ondertekenen in de pipeline voor supply-chain-beveiliging.
