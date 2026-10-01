@@ -1,0 +1,144 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Tjidde.Logging.DesktopApp.ViewModels"
+        xmlns:logging="using:Tjidde.Logging.DesktopApp.Logging"
+        x:Class="Tjidde.Logging.DesktopApp.Views.MainWindow"
+        Title="Tjidde Logger Demo"
+        Width="1000" Height="700"
+        MinWidth="700" MinHeight="500">
+
+    <DockPanel Margin="12">
+
+        <!-- Top form panel -->
+        <Border DockPanel.Dock="Top"
+                Background="#1E1E2E"
+                CornerRadius="8"
+                Padding="16"
+                Margin="0,0,0,10">
+            <StackPanel Spacing="10">
+
+                <TextBlock Text="Send a Log Entry"
+                           FontSize="16" FontWeight="Bold"
+                           Foreground="White" />
+
+                <!-- Row 1: Customer + Level -->
+                <Grid ColumnDefinitions="*,16,*">
+                    <StackPanel Grid.Column="0" Spacing="4">
+                        <TextBlock Text="Customer / Tenant" Foreground="#AAAAAA" FontSize="12"/>
+                        <TextBox Text="{Binding Customer}"
+                                 Watermark="e.g. Acme Corp"
+                                 Background="#2A2A3E" Foreground="White"
+                                 BorderBrush="#444466" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Spacing="4">
+                        <TextBlock Text="Log Level" Foreground="#AAAAAA" FontSize="12"/>
+                        <ComboBox ItemsSource="{Binding LogLevels}"
+                                  SelectedItem="{Binding SelectedLevel}"
+                                  HorizontalAlignment="Stretch"
+                                  Background="#2A2A3E" Foreground="White" />
+                    </StackPanel>
+                </Grid>
+
+                <!-- Row 2: Message -->
+                <StackPanel Spacing="4">
+                    <TextBlock Text="Message" Foreground="#AAAAAA" FontSize="12"/>
+                    <TextBox Text="{Binding Message}"
+                             Watermark="Enter your log message…"
+                             AcceptsReturn="True"
+                             Height="70"
+                             Background="#2A2A3E" Foreground="White"
+                             BorderBrush="#444466" />
+                </StackPanel>
+
+                <!-- Row 3: Exception toggle -->
+                <CheckBox Content="Include a sample exception"
+                          IsChecked="{Binding IncludeException}"
+                          Foreground="White" />
+
+                <StackPanel IsVisible="{Binding IncludeException}" Spacing="8">
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Exception message" Foreground="#AAAAAA" FontSize="12"/>
+                        <TextBox Text="{Binding ExceptionMessage}"
+                                 Watermark="e.g. Something went wrong"
+                                 Background="#2A2A3E" Foreground="White"
+                                 BorderBrush="#444466" />
+                    </StackPanel>
+                    <CheckBox Content="Include inner exception"
+                              IsChecked="{Binding IncludeInner}"
+                              Foreground="White" />
+                </StackPanel>
+
+                <!-- Buttons -->
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <Button Content="Send Log"
+                            Click="OnSendLog"
+                            Background="#5865F2" Foreground="White"
+                            Padding="16,8" CornerRadius="4" />
+                    <Button Content="Clear Output"
+                            Click="OnClearLog"
+                            Background="#444466" Foreground="White"
+                            Padding="16,8" CornerRadius="4" />
+                </StackPanel>
+
+            </StackPanel>
+        </Border>
+
+        <!-- Log output panel -->
+        <Border Background="#13131F"
+                CornerRadius="8"
+                Padding="12">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Top"
+                           Text="{Binding Entries.Count, StringFormat='Log Output ({0} entries)'}"
+                           FontSize="14" FontWeight="Bold"
+                           Foreground="White" Margin="0,0,0,8"/>
+
+                <ScrollViewer>
+                    <ItemsControl ItemsSource="{Binding Entries}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="logging:LogEntry">
+                                <Border Margin="0,0,0,6"
+                                        CornerRadius="4"
+                                        Padding="10,8"
+                                        Background="#1E1E2E">
+                                    <StackPanel Spacing="4">
+                                        <!-- Meta row -->
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <Border CornerRadius="3" Padding="4,2"
+                                                    Background="{Binding Level, Converter={StaticResource LevelColorConverter}}">
+                                                <TextBlock Text="{Binding Level}"
+                                                           FontSize="11" FontWeight="Bold"
+                                                           Foreground="White" />
+                                            </Border>
+                                            <TextBlock Text="{Binding Timestamp, StringFormat='{}{0:yyyy-MM-dd HH:mm:ss}'}"
+                                                       Foreground="#888899" FontSize="11"
+                                                       VerticalAlignment="Center"/>
+                                            <TextBlock Text="{Binding Category}"
+                                                       Foreground="#666688" FontSize="11"
+                                                       VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                        <!-- Message -->
+                                        <TextBlock Text="{Binding FormattedMessage}"
+                                                   Foreground="#DDDDEE"
+                                                   TextWrapping="Wrap" />
+                                        <!-- Exception -->
+                                        <Border IsVisible="{Binding ExceptionDetails, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                                Background="#2A1A1A" CornerRadius="3" Padding="8,6" Margin="0,4,0,0">
+                                            <TextBlock Text="{Binding ExceptionDetails}"
+                                                       Foreground="#FF8888"
+                                                       FontFamily="Courier New,Consolas,monospace"
+                                                       FontSize="11"
+                                                       TextWrapping="Wrap" />
+                                        </Border>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </DockPanel>
+        </Border>
+
+    </DockPanel>
+
+</Window>

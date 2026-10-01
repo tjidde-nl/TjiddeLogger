@@ -1,0 +1,170 @@
+@page "/"
+@rendermode RenderMode.InteractiveServer
+@using Tjidde.Logging.Context
+@using Tjidde.Logging.DemoApp.Logging
+@using Tjidde.Logging.Extensions
+@using Microsoft.Extensions.Logging
+@inject ILogger<Home> Logger
+@inject InMemoryLogSink Sink
+@implements IDisposable
+
+<div class="demo-container">
+
+    <section class="card form-card">
+        <h2>Send a log entry</h2>
+
+        <div class="form-row">
+            <label for="customer">Customer / Tenant</label>
+            <input id="customer" class="input" @bind="_customer" placeholder="e.g. Acme Corp" />
+        </div>
+
+        <div class="form-row">
+            <label for="level">Log level</label>
+            <select id="level" class="input" @bind="_selectedLevel">
+                @foreach (var (label, level) in _levels)
+                {
+                    <option value="@((int)level)">@label</option>
+                }
+            </select>
+        </div>
+
+        <div class="form-row">
+            <label for="message">Message</label>
+            <textarea id="message" class="input textarea" @bind="_message" placeholder="Enter your log message…" rows="3"></textarea>
+        </div>
+
+        <div class="form-row checkbox-row">
+            <label>
+                <input type="checkbox" @bind="_includeException" />
+                Include a sample exception
+            </label>
+        </div>
+
+        @if (_includeException)
+        {
+            <div class="form-row">
+                <label for="exmsg">Exception message</label>
+                <input id="exmsg" class="input" @bind="_exceptionMessage" placeholder="e.g. Something went wrong" />
+            </div>
+            <div class="form-row checkbox-row">
+                <label>
+                    <input type="checkbox" @bind="_includeInner" />
+                    Include inner exception
+                </label>
+            </div>
+        }
+
+        <div class="form-actions">
+            <button class="btn btn-primary" @onclick="SendLog">Send log</button>
+            <button class="btn btn-secondary" @onclick="ClearLog">Clear output</button>
+        </div>
+    </section>
+
+    <section class="card output-card">
+        <div class="output-header">
+            <h2>Log output <span class="entry-count">(@_entries.Count entries)</span></h2>
+        </div>
+
+        @if (_entries.Count == 0)
+        {
+            <p class="empty-hint">No log entries yet. Send one above.</p>
+        }
+        else
+        {
+            <div class="log-list">
+                @foreach (var entry in Enumerable.Reverse(_entries))
+                {
+                    <div class="log-entry log-@LevelCssClass(entry.Level)">
+                        <div class="log-meta">
+                            <span class="log-level">@LevelLabel(entry.Level)</span>
+                            <span class="log-time">@entry.Timestamp.ToString("yyyy-MM-dd HH:mm:ss")</span>
+                            <span class="log-category">@ShortCategory(entry.Category)</span>
+                        </div>
+                        <div class="log-message">@entry.FormattedMessage</div>
+                        @if (entry.ExceptionDetails is not null)
+                        {
+                            <details class="log-exception">
+                                <summary>Exception details</summary>
+                                <pre>@entry.ExceptionDetails</pre>
+                            </details>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    </section>
+
+</div>
+
+@code {
+    private static readonly (string Label, LogLevel Level)[] _levels =
+    [
+        ("Trace",       LogLevel.Trace),
+        ("Debug",       LogLevel.Debug),
+        ("Information", LogLevel.Information),
+        ("Warning",     LogLevel.Warning),
+        ("Error",       LogLevel.Error),
+        ("Critical",    LogLevel.Critical),
+        ("Metrics",     MetricsLoggerExtensions.Metrics)
+    ];
+
+    private string _customer = string.Empty;
+    private int _selectedLevel = (int)LogLevel.Information;
+    private string _message = string.Empty;
+    private bool _includeException;
+    private bool _includeInner;
+    private string _exceptionMessage = "Something went wrong";
+    private IReadOnlyList<LogEntry> _entries = [];
+
+    protected override void OnInitialized()
+    {
+        Sink.OnChanged += RefreshEntries;
+        _entries = Sink.GetEntries();
+    }
+
+    private void RefreshEntries()
+    {
+        _entries = Sink.GetEntries();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void SendLog()
+    {
+        if (string.IsNullOrWhiteSpace(_message)) return;
+
+        CustomerContext.Set(string.IsNullOrWhiteSpace(_customer) ? null : _customer.Trim());
+
+        Exception? ex = null;
+        if (_includeException)
+        {
+            var inner = _includeInner
+                ? new InvalidOperationException("Inner: root cause of the problem")
+                : null;
+            ex = new ApplicationException(
+                string.IsNullOrWhiteSpace(_exceptionMessage) ? "Sample exception" : _exceptionMessage,
+                inner);
+        }
+
+        Logger.Log((LogLevel)_selectedLevel, ex, "{Message}", _message.Trim());
+
+        CustomerContext.Clear();
+    }
+
+    private void ClearLog() => Sink.Clear();
+
+    private static string ShortCategory(string category)
+    {
+        var dot = category.LastIndexOf('.');
+        return dot >= 0 ? category[(dot + 1)..] : category;
+    }
+
+    private static string LevelCssClass(LogLevel level) => (int)level == 10
+        ? "metrics"
+        : level.ToString().ToLower();
+
+    private static string LevelLabel(LogLevel level) => (int)level == 10
+        ? "Metrics"
+        : level.ToString();
+
+    public void Dispose() => Sink.OnChanged -= RefreshEntries;
+}
