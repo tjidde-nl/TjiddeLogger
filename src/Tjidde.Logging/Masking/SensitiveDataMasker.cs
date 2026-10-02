@@ -36,6 +36,9 @@ public sealed class SensitiveDataMasker : ISensitiveDataMasker
     private readonly TimeSpan _matchTimeout;
     private readonly KeySet _keys;
     private readonly IMaskedKeysAccessor? _runtimeKeysAccessor;
+    // True when the accessor hands out immutable snapshots (MaskedKeysStore, MaskedKeysContext), so an unchanged reference
+    // means unchanged keys. Any other accessor may return a collection it changes later, so it is compared by content.
+    private readonly bool _runtimeKeysAreSnapshots;
     private KeySet? _runtimeKeys;
 
     /// <summary>
@@ -71,6 +74,7 @@ public sealed class SensitiveDataMasker : ISensitiveDataMasker
         _placeholder = placeholder;
         _matchTimeout = matchTimeout;
         _runtimeKeysAccessor = runtimeKeysAccessor;
+        _runtimeKeysAreSnapshots = runtimeKeysAccessor is GlobalMaskedKeysAccessor or MaskedKeysStore;
 
         var literals = dynamicKeys?.ToArray() ?? [];
         _keys = new KeySet(
@@ -140,12 +144,16 @@ public sealed class SensitiveDataMasker : ISensitiveDataMasker
 
         var keys = _runtimeKeysAccessor.GetKeys();
         var current = Volatile.Read(ref _runtimeKeys);
-        if (current is not null && current.IsBuiltFrom(keys))
+        if (current is not null && current.IsBuiltFrom(keys, _runtimeKeysAreSnapshots))
             return current;
 
-        // The keys changed since the last call. Concurrent rebuilds produce equal sets, so racing is harmless.
-        var rebuilt = new KeySet(keys, keys, _placeholder, _matchTimeout, source: keys);
-        Volatile.Write(ref _runtimeKeys, rebuilt);
+        // The keys changed since the last call. Build from a copy: a custom accessor may return a collection it
+        // changes later. The masker is shared by all loggers, so other threads may rebuild at the same time; each
+        // call masks with the set built from the keys it read itself. The cache is only replaced when no other thread
+        // replaced it in the meantime; a set that is out of date is rebuilt by the next call that sees other keys.
+        var snapshot = keys.ToArray();
+        var rebuilt = new KeySet(snapshot, snapshot, _placeholder, _matchTimeout, source: snapshot, sourceReference: keys);
+        Interlocked.CompareExchange(ref _runtimeKeys, rebuilt, current);
         return rebuilt;
     }
 
@@ -158,7 +166,7 @@ public sealed class SensitiveDataMasker : ISensitiveDataMasker
         // "Authorization: Bearer abc" becomes "Authorization: Bearer [REDACTED]".
         private const string AuthSchemes = "bearer|basic|digest|negotiate|ntlm";
 
-        // Not RegexOptions.Compiled: every logger builds its own patterns, and the JIT time of a compiled
+        // Not RegexOptions.Compiled: the patterns are rebuilt whenever the runtime keys or the options change, and the JIT time of a compiled
         // pattern's first match counts toward the match timeout, which made busy apps hit timeouts.
         private const RegexOptions PatternOptions = RegexOptions.IgnoreCase;
 
@@ -166,7 +174,8 @@ public sealed class SensitiveDataMasker : ISensitiveDataMasker
         private readonly List<(Regex Pattern, MatchEvaluator Mask)> _patterns = [];
         private readonly string[] _literals;
         private readonly string _placeholder;
-        private readonly IReadOnlyCollection<string>? _source;
+        private readonly object? _sourceReference;
+        private readonly bool _hasSource;
         private readonly HashSet<string> _sourceKeys;
 
         public KeySet(
@@ -174,11 +183,13 @@ public sealed class SensitiveDataMasker : ISensitiveDataMasker
             IEnumerable<string> literals,
             string placeholder,
             TimeSpan matchTimeout,
-            IReadOnlyCollection<string>? source = null)
+            IReadOnlyCollection<string>? source = null,
+            object? sourceReference = null)
         {
             _placeholder = placeholder;
             _literals = literals.Where(literal => !string.IsNullOrWhiteSpace(literal)).ToArray();
-            _source = source;
+            _sourceReference = sourceReference;
+            _hasSource = source is not null;
             _sourceKeys = new HashSet<string>(source ?? [], StringComparer.OrdinalIgnoreCase);
 
             foreach (var key in keys)
@@ -207,8 +218,13 @@ public sealed class SensitiveDataMasker : ISensitiveDataMasker
 
         public bool Contains(string normalizedKey) => _normalizedKeys.Contains(normalizedKey);
 
-        public bool IsBuiltFrom(IReadOnlyCollection<string> keys)
-            => ReferenceEquals(_source, keys) || (_source is not null && _sourceKeys.SetEquals(keys));
+        /// <summary>
+        /// Whether this set was built from the same keys. The reference check is only trusted for immutable
+        /// snapshots; any other collection is compared by content.
+        /// </summary>
+        public bool IsBuiltFrom(IReadOnlyCollection<string> keys, bool referenceMeansUnchanged)
+            => _hasSource
+               && ((referenceMeansUnchanged && ReferenceEquals(_sourceReference, keys)) || _sourceKeys.SetEquals(keys));
 
         public string MaskPatterns(string message)
         {

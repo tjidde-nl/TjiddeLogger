@@ -11,7 +11,7 @@
 7. [Maskering van gevoelige gegevens](#maskering-van-gevoelige-gegevens)
 8. [Uitzonderingsopmaak](#uitzonderingsopmaak)
 9. [Scopes](#scopes)
-10. [Metrics logniveau](#metrics-logniveau)
+10. [Metrics-regels](#metrics-regels)
 11. [CI/CD (GitHub Actions)](#cicd-github-actions)
 12. [Toekomstige ontwikkelingen](#toekomstige-ontwikkelingen)
 
@@ -26,7 +26,7 @@
 - Compacte éénregelige uitzonderingsopmaak inclusief inner exceptions en stack traces.
 - Klantcontextpropagatie via `AsyncLocal` — veilig voor async/await en multi-tenant scenario's.
 - Scope-ondersteuning voor gestructureerde logging.
-- Aangepast `Metrics` logniveau voor het vastleggen van applicatiemetrics naast reguliere logberichten.
+- `LogMetrics` voor metric-achtige regels, weergegeven als `[METRICS]` naast reguliere logberichten.
 - Ondersteunt .NET 7, 8, 9 en 10.
 
 ---
@@ -131,7 +131,7 @@ YYYY-MM-DD: HH:mm:ss: [NIVEAU] CS=>KlasseNaam Method=>MethodeNaam: Client=>Klant
 | Warning | `[WARNING]` |
 | Error | `[ERROR]` |
 | Critical | `[CRITICAL]` |
-| Metrics *(aangepast)* | `[METRICS]` |
+| Metrics *(Information + event `Metrics`)* | `[METRICS]` |
 
 ### Consolekleuren
 
@@ -145,7 +145,7 @@ Elk logniveau wordt in een aparte consolekleur weergegeven voor snelle visuele h
 | Warning | Geel |
 | Error | Rood |
 | Critical | Donkerrood |
-| Metrics *(aangepast)* | Magenta |
+| Metrics *(Information + event `Metrics`)* | Magenta |
 
 ---
 
@@ -159,12 +159,6 @@ Je kunt de Tjidde-logger in code configureren of rechtstreeks vanuit `appsetting
 {
   "TjiddeLogger": {
     "OutputFormat": "Json",
-    "MinimumLevel": "Information",
-    "CategoryMinimumLevels": {
-      "Default": "Warning",
-      "MyCompany.MyApp": "Information",
-      "MyCompany.MyApp.Services.OrderService": "Debug"
-    },
     "EnableOpenTelemetryExport": true,
     "OpenTelemetryActivitySourceName": "MyCompany.MyApp",
     "OpenTelemetryCreateFallbackActivity": false,
@@ -184,6 +178,49 @@ builder.Logging.AddTjiddeLogger(builder.Configuration);
 builder.Logging.AddTjiddeLogger(builder.Configuration.GetSection("TjiddeLogger"));
 ```
 
+Logniveaus horen niet in de sectie `TjiddeLogger`: stel ze in onder `Logging`, zie [Logniveaus per categorie](#logniveaus-per-categorie).
+
+### Logniveaus per categorie
+
+Gebruik de standaardsectie `Logging` van `appsettings.json`. De provider-alias van Tjidde.Logging is `Tjidde`, dus `Logging:Tjidde:LogLevel` geldt alleen voor Tjidde.Logging en `Logging:LogLevel` voor alle providers. Voor Tjidde.Logging gaat een regel onder `Logging:Tjidde:LogLevel` voor op een regel onder `Logging:LogLevel`. Sleutels zijn categorieën of namespace-prefixen (de langste match wint); `Default` is de terugvaloptie:
+
+```json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    },
+    "Tjidde": {
+      "LogLevel": {
+        "Default": "Information",
+        "MyCompany.MyApp.Services.OrderService": "Debug",
+        "MyCompany.MyApp.Polling": "Warning"
+      }
+    }
+  }
+}
+```
+
+Hetzelfde in code:
+
+```csharp
+builder.Logging.AddFilter<TjiddeLoggerProvider>("MyCompany.MyApp.Services.OrderService", LogLevel.Debug);
+```
+
+Deze filters worden net als de andere opties opnieuw ingelezen als de configuratie verandert.
+
+**Verouderd: `MinimumLevel` en `CategoryMinimumLevels`.** `TjiddeLogger:MinimumLevel` en `TjiddeLogger:CategoryMinimumLevels` doen hetzelfde als de filters hierboven en verdwijnen in 2.0. Tot die tijd werken ze nog en worden ze nog uit de configuratie gelezen. Ze filteren *na* de `Logging`-filters; een regel moet dus door beide heen en het strengste niveau wint:
+
+| `Logging:Tjidde:LogLevel:Default` | `TjiddeLogger:MinimumLevel` | Laagste niveau dat wordt geschreven |
+|---|---|---|
+| `Warning` | `Debug` | `Warning` |
+| `Debug` | `Warning` | `Warning` |
+| `Debug` | *(niet ingesteld, `Trace`)* | `Debug` |
+| *(niet ingesteld en geen `Logging:LogLevel`-regel: frameworkstandaard `Information`)* | `Debug` | `Information` |
+
+De laatste rij verrast vaak: zonder `Logging`-regel is het standaardminimum van het framework `Information`, dus alleen `MinimumLevel = Debug` toont nooit debugregels. Zet de waarden over naar `Logging:Tjidde:LogLevel` (sleutels en `Default` werken hetzelfde).
+
 ### Dynamisch censureren (tijdens runtime)
 
 Je kunt extra gevoelige woorden toevoegen om te censureren tijdens runtime vanuit je applicatie via `MaskedKeysContext`. Dit is handig voor het anonimiseren van gegevens die pas tijdens de uitvoering bekend zijn.
@@ -202,6 +239,23 @@ _logger.LogInformation("Verwerken van token SuperGeheimToken voor gebruiker Pers
 MaskedKeysContext.Remove("PersoonsID");
 ```
 
+`MaskedKeysContext` is de gemaksvariant: statisch en procesbreed, dus elke host en elke test in het proces deelt dezelfde sleutels.
+
+#### Geisoleerde sleutels per host (aanbevolen voor testbare code)
+
+Roep `UseIsolatedMaskedKeys()` aan om de host een eigen `MaskedKeysStore` te geven, en injecteer die store waar sleutels bekend worden. Wijzigingen gelden direct voor de bestaande loggers van alleen die host; twee hosts (of twee tests met een eigen `ServiceProvider`) zien elkaars sleutels nooit.
+
+```csharp
+builder.Logging.AddTjiddeLogger().UseIsolatedMaskedKeys();
+
+public sealed class TokenService(MaskedKeysStore maskedKeys)
+{
+    public void OnTokenIssued(string token) => maskedKeys.Add(token);   // ook Remove, Clear, GetKeys
+}
+```
+
+Je kunt ook een eigen `IMaskedKeysAccessor` registreren. Houd `GetKeys()` goedkoop en thread-safe: de masker controleert het bij elke logaanroep. Een collectie die bij elke wijziging wordt vervangen (zoals `MaskedKeysStore` en `MaskedKeysContext` doen) is het goedkoopst te controleren.
+
 ### Optie 2: code-gebaseerde opties
 
 Geef een `Action<TjiddeLoggerOptions>`-delegate mee aan `AddTjiddeLogger` om het gedrag aan te passen:
@@ -210,6 +264,7 @@ Geef een `Action<TjiddeLoggerOptions>`-delegate mee aan `AddTjiddeLogger` om het
 builder.Logging.AddTjiddeLogger(options =>
 {
     options.IncludeScopes              = true;          // Scope-informatie opnemen in uitvoer
+    options.UseUtcTimestamp            = false;         // true: tijdstempels in UTC in plaats van lokale tijd
     options.IncludeStackTrace          = true;          // Stack trace opnemen bij uitzonderingen
     options.IncludeInnerExceptions     = true;          // Inner exceptions opnemen
     options.EnableSensitiveDataMasking = true;          // Gevoelige waarden maskeren
@@ -223,12 +278,13 @@ builder.Logging.AddTjiddeLogger(options =>
 | Optie | Type | Standaard | Beschrijving |
 |---|---|---|---|
 | `OutputFormat` | `TjiddeLogOutputFormat` | `Text` | Weergavemodus: `Text` of `Json` (Elasticsearch-vriendelijke JSON-regel). |
-| `MinimumLevel` | `LogLevel` | `Trace` | Globaal minimum logniveau als er geen categorie-override matcht. |
-| `CategoryMinimumLevels` | `IDictionary<string, LogLevel>` | `{}` | Categorie-/namespace-/klasse-specifieke minimum niveaus. Ondersteunt `Default` en prefix-matching zoals `Logging:LogLevel`. |
+| `MinimumLevel` *(verouderd)* | `LogLevel` | `Trace` | Globaal minimum logniveau als er geen categorie-override matcht. Gebruik `Logging:Tjidde:LogLevel`; verdwijnt in 2.0. |
+| `CategoryMinimumLevels` *(verouderd)* | `IDictionary<string, LogLevel>` | `{}` | Categorie-/namespace-/klasse-specifieke minimum niveaus. Gebruik `Logging:Tjidde:LogLevel`; verdwijnt in 2.0. |
 | `EnableOpenTelemetryExport` | `bool` | `false` | Stuurt elke logregel als OpenTelemetry-event op de huidige `Activity` (voor OTEL-pipelines). |
 | `OpenTelemetryActivitySourceName` | `string` | `Tjidde.Logging` | Activity source-naam voor optionele fallback-activity creatie. |
 | `OpenTelemetryCreateFallbackActivity` | `bool` | `false` | Maakt een korte interne activity als er geen huidige `Activity` beschikbaar is. |
 | `IncludeScopes` | `bool` | `true` | Voegt actieve scope-waarden toe aan de logregel. |
+| `UseUtcTimestamp` | `bool` | `false` | Schrijft tijdstempels in UTC in plaats van lokale tijd. Zie [Tijdstempels en `TimeProvider`](#tijdstempels-en-timeprovider). |
 | `ResolveMethodNameFromStackTrace` | `bool` | `false` | Haalt de methodenaam uit de stack trace als er geen `MethodName`-scope actief is. Doorloopt bij elke logregel de stack en is dus traag; gebruik liever `BeginMethodScope()`. |
 | `IncludeStackTrace` | `bool` | `true` | Neemt de stack trace op bij het loggen van uitzonderingen. |
 | `IncludeInnerExceptions` | `bool` | `true` | Neemt inner exceptions op in de opgemaakte uitvoer. |
@@ -263,6 +319,31 @@ Voorbeeldvorm:
 }
 ```
 
+### Tijdstempels en `TimeProvider`
+
+Tijdstempels zijn standaard lokale tijd. Zet `UseUtcTimestamp` aan om UTC te schrijven; meestal handig als logs van servers in verschillende tijdzones op één plek samenkomen:
+
+```json
+{
+  "TjiddeLogger": {
+    "UseUtcTimestamp": true
+  }
+}
+```
+
+- Tekstuitvoer houdt het formaat `yyyy-MM-dd: HH:mm:ss` zonder offset; let bij het lezen dus op `UseUtcTimestamp`.
+- JSON-uitvoer schrijft `@timestamp` als ISO-8601 met offset: `2026-10-02T10:15:00.0000000+00:00` met `UseUtcTimestamp`, zonder die optie de lokale offset (bijvoorbeeld `+02:00`).
+
+De klok is een `System.TimeProvider`. Is er een geregistreerd in DI, dan gebruikt Tjidde.Logging die; anders `TimeProvider.System`. In tests registreer je een `FakeTimeProvider` (package `Microsoft.Extensions.TimeProvider.Testing`) voor voorspelbare tijdstempels:
+
+```csharp
+var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 2, 10, 15, 0, TimeSpan.Zero));
+services.AddSingleton<TimeProvider>(clock);
+services.AddLogging(logging => logging.AddTjiddeLogger(options => options.UseUtcTimestamp = true));
+```
+
+Zonder DI geef je hem mee aan de constructor: `new TjiddeLoggerProvider(optionsMonitor, customerContextAccessor, maskedKeysAccessor, clock)`.
+
 ### OpenTelemetry-integratie
 
 Schakel OpenTelemetry-export in om elke Tjidde-logregel als event toe te voegen aan de actieve trace-`Activity`.
@@ -282,7 +363,9 @@ Event-tags bevatten onder andere `log.level`, `log.message`, `log.category`, `ev
 
 ## Klantcontext
 
-De klantcontext maakt het mogelijk om elke logmelding te voorzien van een klant- of tenant-identificatie, zonder deze door elke methodeaanroep te hoeven doorgeven. Het maakt gebruik van `AsyncLocal<T>`, zodat het correct doorstroomt via `async`/`await`-ketens.
+De klantcontext maakt het mogelijk om elke logmelding te voorzien van een klant- of tenant-identificatie, zonder deze door elke methodeaanroep te hoeven doorgeven. De logger leest hem via `ICustomerContextAccessor`. De standaard, `AsyncLocalCustomerContextAccessor`, leest de statische `CustomerContext`, die `AsyncLocal<T>` gebruikt, zodat het correct doorstroomt via `async`/`await`-ketens.
+
+Voor testbare code registreer je een eigen `ICustomerContextAccessor` als singleton vóór `AddTjiddeLogger` (bijvoorbeeld een die een claim uit `IHttpContextAccessor` leest); in tests registreer je een fake die een vaste waarde teruggeeft. De statische `CustomerContext` hieronder is de gemaksvariant.
 
 ### Context instellen
 
@@ -455,11 +538,13 @@ builder.Logging.AddTjiddeLogger(options =>
 
 ---
 
-## Metrics logniveau
+## Metrics-regels
 
-Tjidde.Logging biedt een aangepast `Metrics` logniveau voor het vastleggen van applicatiemetrics (tellers, tijdmetingen, meters) naast reguliere logberichten. Omdat `Microsoft.Extensions.Logging.LogLevel` een sealed enum is, is het Metrics-niveau geïmplementeerd als een sterk getypeerde constante met waarde `10`.
+Tjidde.Logging biedt `LogMetrics` voor het schrijven van metric-achtige regels (tellers, tijdmetingen, meters) naast reguliere logberichten. Een metrics-regel is een gewone `LogLevel.Information`-regel met het event-ID `MetricsLoggerExtensions.MetricsEventId` (`Id = 10000`, `Name = "Metrics"`). Tjidde.Logging herkent dat event en toont de regel als `[METRICS]`; andere providers (bijvoorbeeld `AddConsole()`) zien een gewone information-regel.
 
-### Het Metrics-niveau gebruiken
+> Gebruik voor echte applicatiemetrics (dashboards, alerting, aggregatie) [`System.Diagnostics.Metrics`](https://learn.microsoft.com/dotnet/core/diagnostics/metrics) met OpenTelemetry of `dotnet-counters`. `LogMetrics` is bedoeld voor metricwaarden die u ook in de log wilt zien.
+
+### LogMetrics gebruiken
 
 Voeg de using-directive toe en roep `LogMetrics` aan:
 
@@ -475,8 +560,9 @@ _logger.LogMetrics("response_time_ms={ResponseTime}", elapsed.TotalMilliseconds)
 // Met een uitzondering
 _logger.LogMetrics(ex, "payment_failures_total={Count}", failureCount);
 
-// Met een event-ID
-_logger.LogMetrics(new EventId(200, "Throughput"), "throughput_rps={Rps}", rps);
+// Met een event-ID: een event-ID zonder naam krijgt de naam "Metrics" en wordt als [METRICS] getoond;
+// een event-ID met een andere naam wordt ongewijzigd doorgegeven en als [INFORMATION] getoond.
+_logger.LogMetrics(new EventId(200), "throughput_rps={Rps}", rps);
 ```
 
 ### Voorbeelduitvoer
@@ -487,13 +573,13 @@ _logger.LogMetrics(new EventId(200, "Throughput"), "throughput_rps={Rps}", rps);
 
 Het label `[METRICS]` wordt in **Magenta** weergegeven in de console voor eenvoudige visuele herkenning.
 
-### Directe toegang tot het logniveau
+### Filteren
 
-Als u de ruwe `LogLevel`-waarde nodig hebt (bijv. voor filterconfiguratie):
+Het eigen (verouderde) `MinimumLevel` en `CategoryMinimumLevels` van Tjidde.Logging laten metrics-regels altijd door. Filters van `Microsoft.Extensions.Logging` zelf (bijvoorbeeld `Logging:LogLevel:Default` of `Logging:Tjidde:LogLevel:Default` in `appsettings.json`) behandelen ze als `Information`; een categorie die op `Warning` of hoger staat, filtert dus ook haar metrics-regels.
 
-```csharp
-var metricsLevel = MetricsLoggerExtensions.Metrics; // (LogLevel)10
-```
+### Het verouderde `Metrics`-logniveau
+
+Eerdere versies logden metrics op het aangepaste niveau `MetricsLoggerExtensions.Metrics` (`(LogLevel)10`). Die waarde is geen geldig `LogLevel`: andere providers weigeren haar en de console-formatters van Microsoft gooien een `ArgumentOutOfRangeException`, waardoor `LogMetrics` crashte zodra ook `AddConsole()` geregistreerd was. Het veld is nu gemarkeerd als `[Obsolete]`. Tjidde.Logging toont `(LogLevel)10` nog steeds als `[METRICS]`, maar gebruik in plaats daarvan `LogMetrics(...)` (of `MetricsEventId`).
 
 ---
 

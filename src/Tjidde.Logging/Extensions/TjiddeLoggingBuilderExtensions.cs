@@ -6,6 +6,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Primitives;
 
 namespace Tjidde.Logging.Extensions;
 
@@ -36,6 +38,11 @@ public static class TjiddeLoggingBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(configurationSection);
+
+        // Rebind the options when the configuration reloads (for example appsettings.json with reloadOnChange),
+        // so the provider applies the new values to existing loggers.
+        builder.Services.AddSingleton<IOptionsChangeTokenSource<TjiddeLoggerOptions>>(
+            new ConfigurationSectionChangeTokenSource(configurationSection));
 
         return builder.AddTjiddeLogger(options => configurationSection.Bind(options));
     }
@@ -72,9 +79,10 @@ public static class TjiddeLoggingBuilderExtensions
         // Register the default masked keys accessor
         builder.Services.TryAddSingleton<IMaskedKeysAccessor, GlobalMaskedKeysAccessor>();
 
-        // Register the provider
+        // Register the provider through a factory, so the constructor choice never depends on the container:
+        // a TimeProvider registered in DI is used for timestamps, otherwise TimeProvider.System.
         builder.Services.TryAddEnumerable(
-            ServiceDescriptor.Singleton<ILoggerProvider, TjiddeLoggerProvider>());
+            ServiceDescriptor.Singleton<ILoggerProvider, TjiddeLoggerProvider>(CreateProvider));
 
         return builder;
     }
@@ -103,5 +111,41 @@ public static class TjiddeLoggingBuilderExtensions
         ArgumentNullException.ThrowIfNull(builder);
         builder.Services.Configure<TjiddeLoggerOptions>(options => options.OutputFormat = TjiddeLogOutputFormat.Text);
         return builder;
+    }
+
+    /// <summary>
+    /// Gives this host its own <see cref="MaskedKeysStore"/> instead of the process-wide <see cref="MaskedKeysContext"/>.
+    /// The store is registered as a singleton; inject <see cref="MaskedKeysStore"/> to add or remove keys. Changes apply
+    /// immediately to the loggers of this host only, so hosts and tests in the same process do not share keys.
+    /// Replaces any <see cref="IMaskedKeysAccessor"/> registered earlier; can be called before or after <c>AddTjiddeLogger</c>.
+    /// </summary>
+    /// <param name="builder">The <see cref="ILoggingBuilder"/>.</param>
+    /// <returns>The <see cref="ILoggingBuilder"/> for chaining.</returns>
+    public static ILoggingBuilder UseIsolatedMaskedKeys(this ILoggingBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.Services.TryAddSingleton<MaskedKeysStore>();
+        builder.Services.Replace(ServiceDescriptor.Singleton<IMaskedKeysAccessor>(
+            services => services.GetRequiredService<MaskedKeysStore>()));
+        return builder;
+    }
+
+    private static TjiddeLoggerProvider CreateProvider(IServiceProvider services)
+        => new(
+            services.GetRequiredService<IOptionsMonitor<TjiddeLoggerOptions>>(),
+            services.GetRequiredService<ICustomerContextAccessor>(),
+            services.GetRequiredService<IMaskedKeysAccessor>(),
+            services.GetService<TimeProvider>() ?? TimeProvider.System);
+
+    /// <summary>Signals an options change when the bound configuration section reloads.</summary>
+    private sealed class ConfigurationSectionChangeTokenSource : IOptionsChangeTokenSource<TjiddeLoggerOptions>
+    {
+        private readonly IConfiguration _configuration;
+
+        public ConfigurationSectionChangeTokenSource(IConfiguration configuration) => _configuration = configuration;
+
+        public string Name => Microsoft.Extensions.Options.Options.DefaultName;
+
+        public IChangeToken GetChangeToken() => _configuration.GetReloadToken();
     }
 }

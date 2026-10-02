@@ -13,10 +13,20 @@ public sealed class TjiddeLoggerOptions
     /// </summary>
     public TjiddeLogOutputFormat OutputFormat { get; set; } = TjiddeLogOutputFormat.Text;
 
+    internal const string MinimumLevelObsoleteMessage =
+        "Use the standard Microsoft.Extensions.Logging filters instead: Logging:Tjidde:LogLevel in appsettings.json " +
+        "(or AddFilter<TjiddeLoggerProvider>(...) in code). This option will be removed in 2.0.";
+
     /// <summary>
     /// Global minimum log level if no category-specific override is matched.
     /// Default: Trace.
     /// </summary>
+    /// <remarks>
+    /// Obsolete: use <c>Logging:Tjidde:LogLevel</c> in <c>appsettings.json</c> (or
+    /// <c>AddFilter&lt;TjiddeLoggerProvider&gt;</c>) instead. This filter runs after the
+    /// Microsoft.Extensions.Logging filters, so the stricter of the two wins. It will be removed in 2.0.
+    /// </remarks>
+    [Obsolete(MinimumLevelObsoleteMessage)]
     public LogLevel MinimumLevel { get; set; } = LogLevel.Trace;
 
     /// <summary>
@@ -24,8 +34,23 @@ public sealed class TjiddeLoggerOptions
     /// Keys can be fully-qualified categories (for example My.App.Service), namespace prefixes
     /// (for example My.App), or Default for fallback behavior.
     /// </summary>
+    /// <remarks>
+    /// Obsolete: use <c>Logging:Tjidde:LogLevel</c> in <c>appsettings.json</c> (or
+    /// <c>AddFilter&lt;TjiddeLoggerProvider&gt;</c>) instead. This filter runs after the
+    /// Microsoft.Extensions.Logging filters, so the stricter of the two wins. It will be removed in 2.0.
+    /// </remarks>
+    [Obsolete(MinimumLevelObsoleteMessage)]
     public IDictionary<string, LogLevel> CategoryMinimumLevels { get; set; } =
         new Dictionary<string, LogLevel>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Whether timestamps are written in UTC instead of local time.
+    /// Text output shows the time without an offset (<c>yyyy-MM-dd: HH:mm:ss</c>); JSON output writes
+    /// <c>@timestamp</c> as ISO-8601 with the offset (<c>+00:00</c> in UTC, the local offset otherwise).
+    /// The clock is the <see cref="System.TimeProvider"/> registered in DI, or <see cref="System.TimeProvider.System"/>.
+    /// Default: false (local time).
+    /// </summary>
+    public bool UseUtcTimestamp { get; set; }
 
     /// <summary>
     /// Whether to emit each log entry as an OpenTelemetry event on the current <see cref="System.Diagnostics.Activity"/>.

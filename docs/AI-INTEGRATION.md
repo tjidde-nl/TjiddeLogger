@@ -18,10 +18,12 @@ Target frameworks: `net7.0`, `net8.0`, `net9.0`, `net10.0`.
 
 | Namespace | Contains |
 |---|---|
-| `Tjidde.Logging.Extensions` | `AddTjiddeLogger`, `UseTjiddeJsonFormat`, `UseTjiddeTextFormat`, `BeginMethodScope`, `LogMetrics` |
+| `Tjidde.Logging.Extensions` | `AddTjiddeLogger`, `UseTjiddeJsonFormat`, `UseTjiddeTextFormat`, `UseIsolatedMaskedKeys`, `BeginMethodScope`, `LogMetrics` |
 | `Tjidde.Logging.Options` | `TjiddeLoggerOptions`, `TjiddeLogOutputFormat` |
-| `Tjidde.Logging.Context` | `CustomerContext`, `ICustomerContextAccessor` |
-| `Tjidde.Logging.Masking` | `MaskedKeysContext` |
+| `Tjidde.Logging.Context` | `ICustomerContextAccessor`, `AsyncLocalCustomerContextAccessor`, `CustomerContext` |
+| `Tjidde.Logging.Masking` | `IMaskedKeysAccessor`, `MaskedKeysStore`, `MaskedKeysContext` |
+
+Prefer the DI route for testable code: implement `ICustomerContextAccessor` and use `UseIsolatedMaskedKeys()` with an injected `MaskedKeysStore`. The static `CustomerContext` and `MaskedKeysContext` are the convenience defaults; `MaskedKeysContext` is shared by every host and test in the process.
 
 ## Integration steps
 
@@ -79,10 +81,7 @@ builder.Logging.AddTjiddeLogger(options =>
 
 ### 3. Configure log levels
 
-Two filters apply, and an entry must pass both:
-
-1. The standard `Logging` section: `Logging:LogLevel`, or `Logging:Tjidde:LogLevel` for this provider only. Without configuration the minimum is `Information`, so `Debug` and `Trace` entries are dropped here unless you lower it.
-2. `TjiddeLogger:MinimumLevel` and `TjiddeLogger:CategoryMinimumLevels`. The default is `Trace`, so this filter passes everything unless you set it.
+Use the standard `Logging` section. `Logging:Tjidde:LogLevel` applies to this provider only (alias `Tjidde`) and takes precedence over `Logging:LogLevel`, which applies to all providers. Without any rule the minimum is `Information`, so `Debug` and `Trace` entries are dropped unless you lower it. In code: `builder.Logging.AddFilter<TjiddeLoggerProvider>("Shop.Orders", LogLevel.Debug)`.
 
 ```json
 {
@@ -90,6 +89,12 @@ Two filters apply, and an entry must pass both:
     "LogLevel": {
       "Default": "Information",
       "Microsoft.AspNetCore": "Warning"
+    },
+    "Tjidde": {
+      "LogLevel": {
+        "Default": "Information",
+        "Shop.Orders": "Debug"
+      }
     }
   },
   "TjiddeLogger": {
@@ -101,11 +106,13 @@ Two filters apply, and an entry must pass both:
 }
 ```
 
-Options are read once per log category, when the first logger for that category is created. Changing configuration while the app runs has no effect; restart the app.
+Do not use `TjiddeLogger:MinimumLevel` or `TjiddeLogger:CategoryMinimumLevels` in new code: they are obsolete (compiler warning CS0618) and will be removed in 2.0. They still work as a second filter after the `Logging` section, so an entry must pass both and the stricter level wins. When you find them, move the values to `Logging:Tjidde:LogLevel` (same keys, same `Default` fallback).
+
+With `AddTjiddeLogger(builder.Configuration)` and `reloadOnChange` (the default for `appsettings.json`), changes to the `TjiddeLogger` and `Logging` sections apply to existing loggers without a restart.
 
 ### 4. Set the customer context (optional)
 
-Each entry can carry a customer or tenant id: `Client=>…` in text output, `customer` in JSON. Set it at the start of every request:
+Each entry can carry a customer or tenant id: `Client=>…` in text output, `customer` in JSON. The logger reads it through `ICustomerContextAccessor`; for testable code, implement that interface (see below). The quickest route is the static `CustomerContext`, read by the default accessor. Set it at the start of every request:
 
 ```csharp
 using Tjidde.Logging.Context;
@@ -127,7 +134,7 @@ app.Use(async (context, next) =>
 
 `CustomerContext` is stored in an `AsyncLocal`, so the value flows through `await` calls within that request only. In background jobs, call `CustomerContext.Set(...)` at the start of each unit of work.
 
-Alternatively, supply the customer id yourself by implementing `ICustomerContextAccessor`. Register it as a **singleton** (the provider is a singleton and calls it for every entry) and keep it thread-safe:
+Recommended for testable code: supply the customer id yourself by implementing `ICustomerContextAccessor` (in tests, register a fake that returns a fixed value). Register it as a **singleton** (the provider is a singleton and calls it for every entry) and keep it thread-safe:
 
 ```csharp
 using Tjidde.Logging.Context;
@@ -184,7 +191,7 @@ builder.Services.AddSingleton<ICustomerContextAccessor, ClaimsCustomerContextAcc
 
    Do not enable `ResolveMethodNameFromStackTrace`: it walks the stack on every log call.
 
-5. **Use `LogMetrics` for metric-style entries.** They are written at the custom `METRICS` level, which minimum-level filters never drop.
+5. **Use `LogMetrics` for metric-style entries.** They are written at `LogLevel.Information` with event `Metrics` (id 10000) and shown as `METRICS`; Tjidde's own minimum level never drops them, and other providers such as `AddConsole()` see a normal information entry. Never log at `(LogLevel)10` / `MetricsLoggerExtensions.Metrics` (obsolete: other providers throw on it). For real metrics, use `System.Diagnostics.Metrics`.
 
    ```csharp
    _logger.LogMetrics("checkout_duration_ms={DurationMs}", elapsedMs);
@@ -209,11 +216,25 @@ Built-in sensitive keys: `password`, `wachtwoord`, `token`, `accesstoken`, `acce
 
 The pattern masking also masks the word after a sensitive key, so `Refreshing token cache` is written as `Refreshing token [REDACTED]`. Reword such messages if that matters.
 
-To mask values that are only known at runtime, use `MaskedKeysContext.Add(...)`. It masks the literal value anywhere in the output and also treats it as a sensitive key name. The change applies immediately to all loggers, including existing ones; `Remove(...)` and `Clear()` undo it.
+To mask values that are only known at runtime, add them as runtime keys. A runtime key masks the literal value anywhere in the output and is also treated as a sensitive key name. The change applies immediately to all loggers that use the keys, including existing ones; `Remove(...)` and `Clear()` undo it.
+
+Recommended: give the host its own `MaskedKeysStore` and inject it. Keys stay within that host, so tests and multiple hosts in one process do not affect each other:
 
 ```csharp
+using Tjidde.Logging.Extensions;
 using Tjidde.Logging.Masking;
 
+builder.Logging.AddTjiddeLogger().UseIsolatedMaskedKeys();
+
+public sealed class VaultClient(MaskedKeysStore maskedKeys)
+{
+    public void OnSecretLoaded(string apiKeyFromVault) => maskedKeys.Add(apiKeyFromVault);
+}
+```
+
+Convenience variant without DI (the default when `UseIsolatedMaskedKeys()` is not called): the static, process-wide `MaskedKeysContext`.
+
+```csharp
 MaskedKeysContext.Add(apiKeyFromVault);
 ```
 
@@ -233,9 +254,9 @@ Full shape, where segments without a value are left out:
 yyyy-MM-dd: HH:mm:ss: [LEVEL] Class=>ClassName Method=>MethodName: Client=>Customer: Message [Masked: Key1, Key2] | Exception: … | Scopes: a > b
 ```
 
-Levels: `TRACE`, `DEBUG`, `INFORMATION`, `WARNING`, `ERROR`, `CRITICAL`, `METRICS`. Timestamps are local time. Each level gets its own color unless the output is redirected.
+Levels: `TRACE`, `DEBUG`, `INFORMATION`, `WARNING`, `ERROR`, `CRITICAL`, `METRICS` (`METRICS` = an `Information` entry with event name `Metrics`). Timestamps are local time unless `UseUtcTimestamp` is `true`; the text format has no offset. Each level gets its own color unless the output is redirected.
 
-JSON (`OutputFormat: Json`), meant for log shippers such as Elasticsearch or Loki. Shown formatted here; the real output is one object per line, with standard JSON escaping (`+` can appear as `+`):
+JSON (`OutputFormat: Json`), meant for log shippers such as Elasticsearch or Loki. `@timestamp` is ISO-8601 with the offset (`+00:00` with `UseUtcTimestamp`). Shown formatted here; the real output is one object per line, with standard JSON escaping (`+` can appear as `+`):
 
 ```json
 {
@@ -272,6 +293,8 @@ A background thread writes the lines to the console, so log calls do not wait fo
 
 ## Testing code that uses it
 
+The clock is the `TimeProvider` registered in DI, or `TimeProvider.System` when none is registered. To assert on timestamps, register a `FakeTimeProvider` (package `Microsoft.Extensions.TimeProvider.Testing`) with `services.AddSingleton<TimeProvider>(clock)`.
+
 In unit tests, inject `NullLogger<T>.Instance` (from `Microsoft.Extensions.Logging.Abstractions`) instead of the Tjidde logger. If a test must read the console output, dispose the `LoggerFactory` first so all lines have been written.
 
 ## Options reference
@@ -281,9 +304,10 @@ Section name in `appsettings.json`: `TjiddeLogger`.
 | Option | Type | Default | Meaning |
 |---|---|---|---|
 | `OutputFormat` | `TjiddeLogOutputFormat` | `Text` | `Text` or `Json`. |
-| `MinimumLevel` | `LogLevel` | `Trace` | Minimum level when no category rule matches. |
-| `CategoryMinimumLevels` | `IDictionary<string, LogLevel>` | empty | Minimum level per category or namespace prefix; the key `Default` is the fallback. |
+| `MinimumLevel` | `LogLevel` | `Trace` | Obsolete, removed in 2.0: use `Logging:Tjidde:LogLevel`. Minimum level when no category rule matches. |
+| `CategoryMinimumLevels` | `IDictionary<string, LogLevel>` | empty | Obsolete, removed in 2.0: use `Logging:Tjidde:LogLevel`. Minimum level per category or namespace prefix; the key `Default` is the fallback. |
 | `IncludeScopes` | `bool` | `true` | Append scope values to each entry. Also required for `BeginMethodScope`. |
+| `UseUtcTimestamp` | `bool` | `false` | Write timestamps in UTC instead of local time. |
 | `ResolveMethodNameFromStackTrace` | `bool` | `false` | Find the method name from the stack trace when no method scope is active. Slow. |
 | `IncludeStackTrace` | `bool` | `true` | Include stack traces in exception output. |
 | `IncludeInnerExceptions` | `bool` | `true` | Include inner exceptions in exception output. |
@@ -297,7 +321,8 @@ Section name in `appsettings.json`: `TjiddeLogger`.
 ## Checklist
 
 - [ ] `ClearProviders()` is called before `AddTjiddeLogger(...)`.
-- [ ] `Logging:LogLevel` is low enough for the levels the app needs.
+- [ ] `Logging:LogLevel` / `Logging:Tjidde:LogLevel` is low enough for the levels the app needs.
+- [ ] No `TjiddeLogger:MinimumLevel` or `TjiddeLogger:CategoryMinimumLevels` (obsolete); levels live in `Logging:Tjidde:LogLevel`.
 - [ ] The customer context is set per request or job, if used.
 - [ ] Log calls use message templates with named placeholders, never `$"..."`.
 - [ ] Placeholders that can hold secrets are named after a sensitive key, or the name is added to `AdditionalSensitiveKeys`.

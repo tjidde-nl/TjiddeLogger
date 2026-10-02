@@ -11,7 +11,7 @@
 7. [Sensitive Data Masking](#sensitive-data-masking)
 8. [Exception Formatting](#exception-formatting)
 9. [Scopes](#scopes)
-10. [Metrics Log Level](#metrics-log-level)
+10. [Metrics Entries](#metrics-entries)
 11. [CI/CD (GitHub Actions)](#cicd-github-actions)
 12. [Future Work](#future-work)
 
@@ -26,7 +26,7 @@
 - Compact single-line exception formatting including inner exceptions and stack traces.
 - Customer context propagation via `AsyncLocal` — safe for async/await and multi-tenant scenarios.
 - Scope support for structured logging.
-- Custom `Metrics` log level for recording application metrics alongside regular log output.
+- `LogMetrics` for metric-style entries, shown as `[METRICS]` alongside regular log output.
 - Targets .NET 7, 8, 9, and 10.
 
 ---
@@ -131,7 +131,7 @@ YYYY-MM-DD: HH:mm:ss: [LEVEL] CS=>ClassName Method=>MethodName: Client=>Customer
 | Warning | `[WARNING]` |
 | Error | `[ERROR]` |
 | Critical | `[CRITICAL]` |
-| Metrics *(custom)* | `[METRICS]` |
+| Metrics *(Information + event `Metrics`)* | `[METRICS]` |
 
 ### Console colours
 
@@ -145,7 +145,7 @@ Each log level is printed in a distinct console colour for quick visual scanning
 | Warning | Yellow |
 | Error | Red |
 | Critical | Dark Red |
-| Metrics *(custom)* | Magenta |
+| Metrics *(Information + event `Metrics`)* | Magenta |
 
 ---
 
@@ -159,12 +159,6 @@ You can configure Tjidde logger either in code or directly from `appsettings.jso
 {
   "TjiddeLogger": {
     "OutputFormat": "Json",
-    "MinimumLevel": "Information",
-    "CategoryMinimumLevels": {
-      "Default": "Warning",
-      "MyCompany.MyApp": "Information",
-      "MyCompany.MyApp.Services.OrderService": "Debug"
-    },
     "EnableOpenTelemetryExport": true,
     "OpenTelemetryActivitySourceName": "MyCompany.MyApp",
     "OpenTelemetryCreateFallbackActivity": false,
@@ -184,6 +178,49 @@ builder.Logging.AddTjiddeLogger(builder.Configuration);
 builder.Logging.AddTjiddeLogger(builder.Configuration.GetSection("TjiddeLogger"));
 ```
 
+Log levels are not part of the `TjiddeLogger` section: configure them under `Logging`, see [Log levels per category](#log-levels-per-category).
+
+### Log levels per category
+
+Use the standard `Logging` section of `appsettings.json`. Tjidde.Logging's provider alias is `Tjidde`, so `Logging:Tjidde:LogLevel` applies to Tjidde.Logging only, while `Logging:LogLevel` applies to every provider. For Tjidde.Logging, a rule under `Logging:Tjidde:LogLevel` takes precedence over one under `Logging:LogLevel`. Keys are categories or namespace prefixes (the longest match wins) and `Default` is the fallback:
+
+```json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    },
+    "Tjidde": {
+      "LogLevel": {
+        "Default": "Information",
+        "MyCompany.MyApp.Services.OrderService": "Debug",
+        "MyCompany.MyApp.Polling": "Warning"
+      }
+    }
+  }
+}
+```
+
+The same in code:
+
+```csharp
+builder.Logging.AddFilter<TjiddeLoggerProvider>("MyCompany.MyApp.Services.OrderService", LogLevel.Debug);
+```
+
+These filters are reloaded with the configuration, like the other options.
+
+**Obsolete: `MinimumLevel` and `CategoryMinimumLevels`.** `TjiddeLogger:MinimumLevel` and `TjiddeLogger:CategoryMinimumLevels` duplicate the filters above and will be removed in 2.0. Until then they still work and are still bound from configuration. They run *after* the `Logging` filters, so an entry must pass both and the stricter level wins:
+
+| `Logging:Tjidde:LogLevel:Default` | `TjiddeLogger:MinimumLevel` | Lowest level written |
+|---|---|---|
+| `Warning` | `Debug` | `Warning` |
+| `Debug` | `Warning` | `Warning` |
+| `Debug` | *(not set, `Trace`)* | `Debug` |
+| *(not set, and no `Logging:LogLevel` rule: framework default `Information`)* | `Debug` | `Information` |
+
+The last row is a common surprise: without a `Logging` rule, the framework's default minimum is `Information`, so `MinimumLevel = Debug` alone never shows debug entries. Move the values to `Logging:Tjidde:LogLevel` (keys and `Default` work the same way).
+
 ### Dynamic Censoring (at runtime)
 
 You can add extra sensitive words for censoring at runtime from within your application using `MaskedKeysContext`. This is useful for redacting data that is only known at execution time.
@@ -202,6 +239,23 @@ _logger.LogInformation("Processing token SuperSecretToken for user PersonalID");
 MaskedKeysContext.Remove("PersonalID");
 ```
 
+`MaskedKeysContext` is the convenience variant: static and process-wide, so every host and every test in the process shares its keys.
+
+#### Isolated keys per host (recommended for testable code)
+
+Call `UseIsolatedMaskedKeys()` to give the host its own `MaskedKeysStore`, and inject that store where keys become known. Changes apply immediately to the existing loggers of that host only; two hosts (or two tests with their own `ServiceProvider`) never see each other's keys.
+
+```csharp
+builder.Logging.AddTjiddeLogger().UseIsolatedMaskedKeys();
+
+public sealed class TokenService(MaskedKeysStore maskedKeys)
+{
+    public void OnTokenIssued(string token) => maskedKeys.Add(token);   // also Remove, Clear, GetKeys
+}
+```
+
+You can also register your own `IMaskedKeysAccessor`. Keep `GetKeys()` cheap and thread-safe: the masker checks it on every log call. A collection that is replaced on every change (like `MaskedKeysStore` and `MaskedKeysContext` do) is the cheapest to check.
+
 ### Option 2: code-based options
 
 Pass an `Action<TjiddeLoggerOptions>` delegate to `AddTjiddeLogger` to customise behaviour:
@@ -210,6 +264,7 @@ Pass an `Action<TjiddeLoggerOptions>` delegate to `AddTjiddeLogger` to customise
 builder.Logging.AddTjiddeLogger(options =>
 {
     options.IncludeScopes              = true;          // Include scope info in output
+    options.UseUtcTimestamp            = false;         // true: timestamps in UTC instead of local time
     options.IncludeStackTrace          = true;          // Include stack trace in exception output
     options.IncludeInnerExceptions     = true;          // Include inner exceptions
     options.EnableSensitiveDataMasking = true;          // Mask sensitive values
@@ -223,12 +278,13 @@ builder.Logging.AddTjiddeLogger(options =>
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `OutputFormat` | `TjiddeLogOutputFormat` | `Text` | Log rendering mode: `Text` or `Json` (Elasticsearch-friendly JSON line). |
-| `MinimumLevel` | `LogLevel` | `Trace` | Global minimum log level fallback when no category override matches. |
-| `CategoryMinimumLevels` | `IDictionary<string, LogLevel>` | `{}` | Category/namespace/class-specific minimum levels. Supports `Default` fallback and prefix matching like `Logging:LogLevel`. |
+| `MinimumLevel` *(obsolete)* | `LogLevel` | `Trace` | Global minimum log level fallback when no category override matches. Use `Logging:Tjidde:LogLevel` instead; removed in 2.0. |
+| `CategoryMinimumLevels` *(obsolete)* | `IDictionary<string, LogLevel>` | `{}` | Category/namespace/class-specific minimum levels. Use `Logging:Tjidde:LogLevel` instead; removed in 2.0. |
 | `EnableOpenTelemetryExport` | `bool` | `false` | Emits each log as an OpenTelemetry event on the current `Activity` (for OTEL pipelines). |
 | `OpenTelemetryActivitySourceName` | `string` | `Tjidde.Logging` | Activity source name used for optional fallback activity creation. |
 | `OpenTelemetryCreateFallbackActivity` | `bool` | `false` | Creates a short-lived internal activity if no current `Activity` exists. |
 | `IncludeScopes` | `bool` | `true` | Appends active scope values to the log line. |
+| `UseUtcTimestamp` | `bool` | `false` | Writes timestamps in UTC instead of local time. See [Timestamps and `TimeProvider`](#timestamps-and-timeprovider). |
 | `ResolveMethodNameFromStackTrace` | `bool` | `false` | Falls back to the stack trace for the method name when no `MethodName` scope is active. Walks the stack on every log call, so it is slow; prefer `BeginMethodScope()`. |
 | `IncludeStackTrace` | `bool` | `true` | Includes the stack trace when an exception is logged. |
 | `IncludeInnerExceptions` | `bool` | `true` | Includes inner exceptions in the formatted output. |
@@ -263,6 +319,31 @@ Example shape:
 }
 ```
 
+### Timestamps and `TimeProvider`
+
+Timestamps are local time by default. Set `UseUtcTimestamp` to write UTC instead, which is usually what you want when logs from servers in different time zones end up in one place:
+
+```json
+{
+  "TjiddeLogger": {
+    "UseUtcTimestamp": true
+  }
+}
+```
+
+- Text output keeps the `yyyy-MM-dd: HH:mm:ss` format without an offset, so check `UseUtcTimestamp` when you read it.
+- JSON output writes `@timestamp` as ISO-8601 with the offset: `2026-10-02T10:15:00.0000000+00:00` with `UseUtcTimestamp`, the local offset (for example `+02:00`) without it.
+
+The clock is a `System.TimeProvider`. When one is registered in DI, Tjidde.Logging uses it; otherwise it uses `TimeProvider.System`. In tests you can register a `FakeTimeProvider` (package `Microsoft.Extensions.TimeProvider.Testing`) to get predictable timestamps:
+
+```csharp
+var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 2, 10, 15, 0, TimeSpan.Zero));
+services.AddSingleton<TimeProvider>(clock);
+services.AddLogging(logging => logging.AddTjiddeLogger(options => options.UseUtcTimestamp = true));
+```
+
+Without DI, pass it to the constructor: `new TjiddeLoggerProvider(optionsMonitor, customerContextAccessor, maskedKeysAccessor, clock)`.
+
 ### OpenTelemetry integration
 
 Enable OpenTelemetry export to attach each Tjidde log entry as an event to the active trace `Activity`.
@@ -282,7 +363,9 @@ Event tags include fields such as `log.level`, `log.message`, `log.category`, `e
 
 ## Customer Context
 
-The customer context allows you to tag every log entry with a customer or tenant identifier without passing it through every method call. It uses `AsyncLocal<T>` so it flows correctly through `async`/`await` chains.
+The customer context allows you to tag every log entry with a customer or tenant identifier without passing it through every method call. The logger reads it through `ICustomerContextAccessor`. The default, `AsyncLocalCustomerContextAccessor`, reads the static `CustomerContext`, which uses `AsyncLocal<T>` so it flows correctly through `async`/`await` chains.
+
+For testable code, register your own `ICustomerContextAccessor` as a singleton before `AddTjiddeLogger` (for example one that reads a claim from `IHttpContextAccessor`); in tests, register a fake that returns a fixed value. The static `CustomerContext` below is the convenience variant.
 
 ### Setting the context
 
@@ -455,11 +538,13 @@ builder.Logging.AddTjiddeLogger(options =>
 
 ---
 
-## Metrics Log Level
+## Metrics Entries
 
-Tjidde.Logging provides a custom `Metrics` log level for recording application metrics (counters, timings, gauges) alongside regular log output. Because `Microsoft.Extensions.Logging.LogLevel` is a sealed enum, the Metrics level is implemented as a strongly-typed constant with value `10`.
+Tjidde.Logging provides `LogMetrics` for writing metric-style entries (counters, timings, gauges) alongside regular log output. A metrics entry is a normal `LogLevel.Information` entry with the event ID `MetricsLoggerExtensions.MetricsEventId` (`Id = 10000`, `Name = "Metrics"`). Tjidde.Logging recognizes that event and shows the entry as `[METRICS]`; other providers (for example `AddConsole()`) see an ordinary information entry.
 
-### Using the Metrics level
+> For real application metrics (dashboards, alerting, aggregation), use [`System.Diagnostics.Metrics`](https://learn.microsoft.com/dotnet/core/diagnostics/metrics) with OpenTelemetry or `dotnet-counters`. `LogMetrics` is meant for metric values you also want to see in the log.
+
+### Using LogMetrics
 
 Add the using directive and call `LogMetrics`:
 
@@ -475,8 +560,9 @@ _logger.LogMetrics("response_time_ms={ResponseTime}", elapsed.TotalMilliseconds)
 // With an exception
 _logger.LogMetrics(ex, "payment_failures_total={Count}", failureCount);
 
-// With an event ID
-_logger.LogMetrics(new EventId(200, "Throughput"), "throughput_rps={Rps}", rps);
+// With an event ID: an unnamed event ID gets the name "Metrics" and is shown as [METRICS];
+// an event ID with another name is passed on unchanged and shown as [INFORMATION].
+_logger.LogMetrics(new EventId(200), "throughput_rps={Rps}", rps);
 ```
 
 ### Example output
@@ -487,13 +573,13 @@ _logger.LogMetrics(new EventId(200, "Throughput"), "throughput_rps={Rps}", rps);
 
 The `[METRICS]` label is printed in **Magenta** in the console for easy visual distinction.
 
-### Direct log level access
+### Filtering
 
-If you need the raw `LogLevel` value (e.g. for filtering configuration):
+Tjidde.Logging's own (obsolete) `MinimumLevel` and `CategoryMinimumLevels` never drop metrics entries. Filters of `Microsoft.Extensions.Logging` itself (for example `Logging:LogLevel:Default` or `Logging:Tjidde:LogLevel:Default` in `appsettings.json`) treat them as `Information`, so a category filtered to `Warning` or higher also filters its metrics entries.
 
-```csharp
-var metricsLevel = MetricsLoggerExtensions.Metrics; // (LogLevel)10
-```
+### The obsolete `Metrics` log level
+
+Earlier versions logged metrics at the custom level `MetricsLoggerExtensions.Metrics` (`(LogLevel)10`). That value is not a valid `LogLevel`: other providers reject it, and the Microsoft console formatters throw an `ArgumentOutOfRangeException`, so `LogMetrics` crashed as soon as `AddConsole()` was also registered. The field is now marked `[Obsolete]`. Tjidde.Logging still shows `(LogLevel)10` as `[METRICS]`, but use `LogMetrics(...)` (or `MetricsEventId`) instead.
 
 ---
 
