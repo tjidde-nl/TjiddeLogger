@@ -12,7 +12,7 @@
   <ItemGroup>
     <!-- 2.9.3 is the last xunit v2 release (v3 ships as the separate xunit.v3 package) -->
     <PackageReference Include="xunit" Version="2.9.3" />
-    <PackageReference Include="FluentAssertions" Version="8.9.0" />
+    <PackageReference Include="FluentAssertions" Version="8.11.0" />
   </ItemGroup>
 
   <!--
