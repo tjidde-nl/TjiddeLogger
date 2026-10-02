@@ -23,7 +23,12 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: 10.0.x
+          # All runtimes: the tests run on every target framework of the library
+          dotnet-version: |
+            7.0.x
+            8.0.x
+            9.0.x
+            10.0.x
 
       - name: Restore
         run: dotnet restore TjiddeLogger.sln
@@ -31,8 +36,19 @@ jobs:
       - name: Build
         run: dotnet build TjiddeLogger.sln --configuration Release --no-restore
 
+      # Runs once per target framework (net7.0, net8.0, net9.0, net10.0); one .trx file per framework
       - name: Test
-        run: dotnet test tests/Tjidde.Logging.Tests/Tjidde.Logging.Tests.csproj --configuration Release --no-build
+        run: >-
+          dotnet test tests/Tjidde.Logging.Tests/Tjidde.Logging.Tests.csproj --configuration Release --no-build
+          --logger "trx;LogFilePrefix=test-results" --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: TestResults/*.trx
+          if-no-files-found: warn
 
       - name: Pack
         run: dotnet pack src/Tjidde.Logging/Tjidde.Logging.csproj --configuration Release --no-build --output artifacts
