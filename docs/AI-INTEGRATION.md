@@ -233,9 +233,9 @@ Full shape, where segments without a value are left out:
 yyyy-MM-dd: HH:mm:ss: [LEVEL] Class=>ClassName Method=>MethodName: Client=>Customer: Message [Masked: Key1, Key2] | Exception: … | Scopes: a > b
 ```
 
-Levels: `TRACE`, `DEBUG`, `INFORMATION`, `WARNING`, `ERROR`, `CRITICAL`, `METRICS` (`METRICS` = an `Information` entry with event name `Metrics`). Timestamps are local time. Each level gets its own color unless the output is redirected.
+Levels: `TRACE`, `DEBUG`, `INFORMATION`, `WARNING`, `ERROR`, `CRITICAL`, `METRICS` (`METRICS` = an `Information` entry with event name `Metrics`). Timestamps are local time unless `UseUtcTimestamp` is `true`; the text format has no offset. Each level gets its own color unless the output is redirected.
 
-JSON (`OutputFormat: Json`), meant for log shippers such as Elasticsearch or Loki. Shown formatted here; the real output is one object per line, with standard JSON escaping (`+` can appear as `+`):
+JSON (`OutputFormat: Json`), meant for log shippers such as Elasticsearch or Loki. `@timestamp` is ISO-8601 with the offset (`+00:00` with `UseUtcTimestamp`). Shown formatted here; the real output is one object per line, with standard JSON escaping (`+` can appear as `+`):
 
 ```json
 {
@@ -272,6 +272,8 @@ A background thread writes the lines to the console, so log calls do not wait fo
 
 ## Testing code that uses it
 
+The clock is the `TimeProvider` registered in DI, or `TimeProvider.System` when none is registered. To assert on timestamps, register a `FakeTimeProvider` (package `Microsoft.Extensions.TimeProvider.Testing`) with `services.AddSingleton<TimeProvider>(clock)`.
+
 In unit tests, inject `NullLogger<T>.Instance` (from `Microsoft.Extensions.Logging.Abstractions`) instead of the Tjidde logger. If a test must read the console output, dispose the `LoggerFactory` first so all lines have been written.
 
 ## Options reference
@@ -284,6 +286,7 @@ Section name in `appsettings.json`: `TjiddeLogger`.
 | `MinimumLevel` | `LogLevel` | `Trace` | Minimum level when no category rule matches. |
 | `CategoryMinimumLevels` | `IDictionary<string, LogLevel>` | empty | Minimum level per category or namespace prefix; the key `Default` is the fallback. |
 | `IncludeScopes` | `bool` | `true` | Append scope values to each entry. Also required for `BeginMethodScope`. |
+| `UseUtcTimestamp` | `bool` | `false` | Write timestamps in UTC instead of local time. |
 | `ResolveMethodNameFromStackTrace` | `bool` | `false` | Find the method name from the stack trace when no method scope is active. Slow. |
 | `IncludeStackTrace` | `bool` | `true` | Include stack traces in exception output. |
 | `IncludeInnerExceptions` | `bool` | `true` | Include inner exceptions in exception output. |

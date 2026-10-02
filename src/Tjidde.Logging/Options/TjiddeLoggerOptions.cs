@@ -28,6 +28,15 @@ public sealed class TjiddeLoggerOptions
         new Dictionary<string, LogLevel>(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Whether timestamps are written in UTC instead of local time.
+    /// Text output shows the time without an offset (<c>yyyy-MM-dd: HH:mm:ss</c>); JSON output writes
+    /// <c>@timestamp</c> as ISO-8601 with the offset (<c>+00:00</c> in UTC, the local offset otherwise).
+    /// The clock is the <see cref="System.TimeProvider"/> registered in DI, or <see cref="System.TimeProvider.System"/>.
+    /// Default: false (local time).
+    /// </summary>
+    public bool UseUtcTimestamp { get; set; }
+
+    /// <summary>
     /// Whether to emit each log entry as an OpenTelemetry event on the current <see cref="System.Diagnostics.Activity"/>.
     /// Default: false.
     /// </summary>

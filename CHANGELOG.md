@@ -7,12 +7,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 - `MetricsLoggerExtensions.MetricsEventId` (`Id = 10000`, `Name = "Metrics"`), plus the constants `MetricsEventName` and `MetricsEventIdValue`. Tjidde.Logging shows every entry with event name `Metrics` as `[METRICS]` in magenta.
+- `TjiddeLoggerOptions.UseUtcTimestamp` (default `false`): write timestamps in UTC instead of local time. JSON `@timestamp` is ISO-8601 with the offset (`+00:00` in UTC).
+- Timestamps come from `System.TimeProvider`: the one registered in DI, or `TimeProvider.System` when none is registered, so tests can use a `FakeTimeProvider`. New constructor overload `TjiddeLoggerProvider(IOptionsMonitor<TjiddeLoggerOptions>, ICustomerContextAccessor, IMaskedKeysAccessor, TimeProvider)`; the existing constructor still works and uses `TimeProvider.System`. On .NET 7 this adds a dependency on `Microsoft.Bcl.TimeProvider`.
 
 ### Changed
 - Options changes now apply to existing loggers immediately, without a restart: the provider listens to `IOptionsMonitor<TjiddeLoggerOptions>.OnChange`, and `AddTjiddeLogger(IConfiguration)` / `AddTjiddeLogger(IConfigurationSection)` rebind the options when the configuration reloads (for example `appsettings.json` with `reloadOnChange`). Options, masker, exception formatter and OpenTelemetry fallback `ActivitySource` are replaced together, so a log call never mixes old and new settings; the previous `ActivitySource` is disposed.
 - `LogMetrics` now logs at `LogLevel.Information` with `MetricsEventId` instead of the custom level `(LogLevel)10`. Tjidde.Logging still shows these entries as `[METRICS]` and its own minimum level never drops them; other providers see a normal information entry. `LogMetrics(EventId, ...)` keeps the caller's event ID and only adds the name `Metrics` when it has none.
 - JSON output: object cycles in logged values are written as `null` instead of failing, and object graphs deeper than 32 levels fall back to `ToString()`.
 - All loggers of a provider share one `SensitiveDataMasker` (and its regular expressions) per configuration instead of building one per category; it is replaced when the options change.
+- `AddTjiddeLogger` registers `TjiddeLoggerProvider` through a factory, so the container never has to choose between its constructors.
 - `IsEnabled` caches the resolved minimum level per logger until the options change, instead of matching `CategoryMinimumLevels` on every call.
 
 ### Fixed

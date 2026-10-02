@@ -210,6 +210,7 @@ Pass an `Action<TjiddeLoggerOptions>` delegate to `AddTjiddeLogger` to customise
 builder.Logging.AddTjiddeLogger(options =>
 {
     options.IncludeScopes              = true;          // Include scope info in output
+    options.UseUtcTimestamp            = false;         // true: timestamps in UTC instead of local time
     options.IncludeStackTrace          = true;          // Include stack trace in exception output
     options.IncludeInnerExceptions     = true;          // Include inner exceptions
     options.EnableSensitiveDataMasking = true;          // Mask sensitive values
@@ -229,6 +230,7 @@ builder.Logging.AddTjiddeLogger(options =>
 | `OpenTelemetryActivitySourceName` | `string` | `Tjidde.Logging` | Activity source name used for optional fallback activity creation. |
 | `OpenTelemetryCreateFallbackActivity` | `bool` | `false` | Creates a short-lived internal activity if no current `Activity` exists. |
 | `IncludeScopes` | `bool` | `true` | Appends active scope values to the log line. |
+| `UseUtcTimestamp` | `bool` | `false` | Writes timestamps in UTC instead of local time. See [Timestamps and `TimeProvider`](#timestamps-and-timeprovider). |
 | `ResolveMethodNameFromStackTrace` | `bool` | `false` | Falls back to the stack trace for the method name when no `MethodName` scope is active. Walks the stack on every log call, so it is slow; prefer `BeginMethodScope()`. |
 | `IncludeStackTrace` | `bool` | `true` | Includes the stack trace when an exception is logged. |
 | `IncludeInnerExceptions` | `bool` | `true` | Includes inner exceptions in the formatted output. |
@@ -262,6 +264,31 @@ Example shape:
   }
 }
 ```
+
+### Timestamps and `TimeProvider`
+
+Timestamps are local time by default. Set `UseUtcTimestamp` to write UTC instead, which is usually what you want when logs from servers in different time zones end up in one place:
+
+```json
+{
+  "TjiddeLogger": {
+    "UseUtcTimestamp": true
+  }
+}
+```
+
+- Text output keeps the `yyyy-MM-dd: HH:mm:ss` format without an offset, so check `UseUtcTimestamp` when you read it.
+- JSON output writes `@timestamp` as ISO-8601 with the offset: `2026-10-02T10:15:00.0000000+00:00` with `UseUtcTimestamp`, the local offset (for example `+02:00`) without it.
+
+The clock is a `System.TimeProvider`. When one is registered in DI, Tjidde.Logging uses it; otherwise it uses `TimeProvider.System`. In tests you can register a `FakeTimeProvider` (package `Microsoft.Extensions.TimeProvider.Testing`) to get predictable timestamps:
+
+```csharp
+var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 2, 10, 15, 0, TimeSpan.Zero));
+services.AddSingleton<TimeProvider>(clock);
+services.AddLogging(logging => logging.AddTjiddeLogger(options => options.UseUtcTimestamp = true));
+```
+
+Without DI, pass it to the constructor: `new TjiddeLoggerProvider(optionsMonitor, customerContextAccessor, maskedKeysAccessor, clock)`.
 
 ### OpenTelemetry integration
 

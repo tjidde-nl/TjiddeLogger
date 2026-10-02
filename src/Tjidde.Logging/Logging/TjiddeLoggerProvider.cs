@@ -18,6 +18,7 @@ public sealed class TjiddeLoggerProvider : ILoggerProvider, ISupportExternalScop
     private readonly ICustomerContextAccessor _customerContextAccessor;
     private readonly IMaskedKeysAccessor _maskedKeysAccessor;
     private readonly TjiddeLoggerConfigurationHolder _configuration;
+    private readonly TimeProvider _timeProvider;
     private readonly IDisposable? _optionsChangeRegistration;
     private readonly object _sync = new();
     private readonly ConcurrentDictionary<string, TjiddeLogger> _loggers = new(StringComparer.OrdinalIgnoreCase);
@@ -26,15 +27,33 @@ public sealed class TjiddeLoggerProvider : ILoggerProvider, ISupportExternalScop
     private bool _disposed;
 
     /// <summary>
-    /// Initializes a new instance of <see cref="TjiddeLoggerProvider"/>.
+    /// Initializes a new instance of <see cref="TjiddeLoggerProvider"/> that takes its timestamps from
+    /// <see cref="TimeProvider.System"/>.
     /// </summary>
     public TjiddeLoggerProvider(
         IOptionsMonitor<TjiddeLoggerOptions> optionsMonitor,
         ICustomerContextAccessor customerContextAccessor,
         IMaskedKeysAccessor maskedKeysAccessor)
+        : this(optionsMonitor, customerContextAccessor, maskedKeysAccessor, TimeProvider.System)
     {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of <see cref="TjiddeLoggerProvider"/> that takes its timestamps from
+    /// <paramref name="timeProvider"/>, for example a fake clock in tests.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="timeProvider"/> is <see langword="null"/>.</exception>
+    public TjiddeLoggerProvider(
+        IOptionsMonitor<TjiddeLoggerOptions> optionsMonitor,
+        ICustomerContextAccessor customerContextAccessor,
+        IMaskedKeysAccessor maskedKeysAccessor,
+        TimeProvider timeProvider)
+    {
+        ArgumentNullException.ThrowIfNull(timeProvider);
+
         _customerContextAccessor = customerContextAccessor;
         _maskedKeysAccessor = maskedKeysAccessor;
+        _timeProvider = timeProvider;
         _configuration = new TjiddeLoggerConfigurationHolder(
             TjiddeLoggerConfiguration.Create(optionsMonitor.CurrentValue, maskedKeysAccessor));
 
@@ -90,7 +109,7 @@ public sealed class TjiddeLoggerProvider : ILoggerProvider, ISupportExternalScop
     }
 
     private TjiddeLogger CreateLoggerInstance(string categoryName)
-        => new(categoryName, _configuration, _customerContextAccessor, _processor, _scopeProvider);
+        => new(categoryName, _configuration, _customerContextAccessor, _processor, _scopeProvider, _timeProvider);
 
     private void OnOptionsChanged(TjiddeLoggerOptions options, string? name)
     {

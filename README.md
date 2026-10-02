@@ -157,6 +157,8 @@ YYYY-MM-DD: HH:mm:ss: [LEVEL] Class=>ClassName Method=>MethodName: Client=>Custo
 - `METRICS` is shown for entries written with `_logger.LogMetrics(...)`. They are logged at `LogLevel.Information` with event `Metrics` (id 10000), so other providers such as `AddConsole()` see a normal information entry. For real application metrics, use `System.Diagnostics.Metrics`.
 - `Method=>` is included when set via `using (_logger.BeginMethodScope())` (or a scope with key `MethodName`)
 - `Client=>` is omitted when no customer context is active
+- The timestamp is local time by default; set `UseUtcTimestamp = true` for UTC. JSON output writes `@timestamp` as ISO-8601 with the offset (for example `2026-10-02T10:15:00.0000000+00:00`)
+- The clock is the `TimeProvider` registered in DI (for example a `FakeTimeProvider` in tests), or `TimeProvider.System` when none is registered
 
 ---
 
@@ -165,6 +167,7 @@ YYYY-MM-DD: HH:mm:ss: [LEVEL] Class=>ClassName Method=>MethodName: Client=>Custo
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `IncludeScopes` | `bool` | `true` | Include scope information in output |
+| `UseUtcTimestamp` | `bool` | `false` | Write timestamps in UTC instead of local time |
 | `ResolveMethodNameFromStackTrace` | `bool` | `false` | Fall back to the stack trace for the method name when no `MethodName` scope is active (slow) |
 | `IncludeStackTrace` | `bool` | `true` | Include stack trace in exception output |
 | `IncludeInnerExceptions` | `bool` | `true` | Include inner exception chain |

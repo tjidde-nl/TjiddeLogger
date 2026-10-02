@@ -29,6 +29,7 @@ internal sealed class TjiddeLogger : ILogger
     private readonly TjiddeLoggerConfigurationHolder _configuration;
     private readonly ICustomerContextAccessor _customerContextAccessor;
     private readonly ConsoleLogProcessor _processor;
+    private readonly TimeProvider _timeProvider;
     private IExternalScopeProvider? _scopeProvider;
 
     // Minimum level resolved for this category, together with the configuration it was resolved from.
@@ -41,19 +42,22 @@ internal sealed class TjiddeLogger : ILogger
     /// <summary>
     /// Creates a logger that reads its settings from <paramref name="configuration"/> on every call,
     /// so a configuration change applies to this logger immediately.
+    /// Timestamps come from <paramref name="timeProvider"/> (default: <see cref="TimeProvider.System"/>).
     /// </summary>
     public TjiddeLogger(
         string categoryName,
         TjiddeLoggerConfigurationHolder configuration,
         ICustomerContextAccessor customerContextAccessor,
         ConsoleLogProcessor processor,
-        IExternalScopeProvider? scopeProvider)
+        IExternalScopeProvider? scopeProvider,
+        TimeProvider? timeProvider = null)
     {
         _categoryName = categoryName;
         _configuration = configuration;
         _customerContextAccessor = customerContextAccessor;
         _processor = processor;
         _scopeProvider = scopeProvider;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _className = ExtractClassName(categoryName);
     }
 
@@ -65,13 +69,15 @@ internal sealed class TjiddeLogger : ILogger
         ISensitiveDataMasker masker,
         IExceptionFormatter exceptionFormatter,
         ConsoleLogProcessor processor,
-        IExternalScopeProvider? scopeProvider)
+        IExternalScopeProvider? scopeProvider,
+        TimeProvider? timeProvider = null)
         : this(
             categoryName,
             new TjiddeLoggerConfigurationHolder(new TjiddeLoggerConfiguration(options, masker, exceptionFormatter)),
             customerContextAccessor,
             processor,
-            scopeProvider)
+            scopeProvider,
+            timeProvider)
     {
     }
 
@@ -135,7 +141,7 @@ internal sealed class TjiddeLogger : ILogger
             return;
 
         // Logging must never throw: any failure while building the entry produces a minimal line instead.
-        var now = DateTime.Now;
+        var now = GetTimestamp(config);
         string? message = null;
         try
         {
@@ -147,9 +153,27 @@ internal sealed class TjiddeLogger : ILogger
         }
     }
 
+    /// <summary>
+    /// The timestamp for an entry: UTC when <see cref="TjiddeLoggerOptions.UseUtcTimestamp"/> is set, otherwise
+    /// local time (the time provider's local time zone). Falls back to the system clock if the provider throws.
+    /// </summary>
+    private DateTimeOffset GetTimestamp(TjiddeLoggerConfiguration config)
+    {
+        var utc = config.Options.UseUtcTimestamp;
+        try
+        {
+            return utc ? _timeProvider.GetUtcNow() : _timeProvider.GetLocalNow();
+        }
+        catch (Exception)
+        {
+            // Logging must never throw, not even when a custom TimeProvider does.
+            return utc ? DateTimeOffset.UtcNow : DateTimeOffset.Now;
+        }
+    }
+
     private void WriteEntry<TState>(
         TjiddeLoggerConfiguration config,
-        DateTime now,
+        DateTimeOffset now,
         LogLevel logLevel,
         EventId eventId,
         TState state,
@@ -202,7 +226,7 @@ internal sealed class TjiddeLogger : ILogger
     /// </summary>
     private void WriteFallbackEntry<TState>(
         TjiddeLoggerConfiguration config,
-        DateTime now,
+        DateTimeOffset now,
         LogLevel logLevel,
         EventId eventId,
         TState state,
@@ -409,7 +433,7 @@ internal sealed class TjiddeLogger : ILogger
 
     private void ExportToOpenTelemetry(
         TjiddeLoggerConfiguration config,
-        DateTime timestamp,
+        DateTimeOffset timestamp,
         LogLevel logLevel,
         EventId eventId,
         string? methodName,
@@ -499,7 +523,7 @@ internal sealed class TjiddeLogger : ILogger
 
     private string BuildTextLogLine(
         TjiddeLoggerConfiguration config,
-        DateTime timestamp,
+        DateTimeOffset timestamp,
         LogLevel logLevel,
         EventId eventId,
         string? methodName,
@@ -526,7 +550,7 @@ internal sealed class TjiddeLogger : ILogger
 
     private string BuildJsonLogLine(
         TjiddeLoggerConfiguration config,
-        DateTime timestamp,
+        DateTimeOffset timestamp,
         LogLevel logLevel,
         EventId eventId,
         string? methodName,
@@ -586,7 +610,7 @@ internal sealed class TjiddeLogger : ILogger
     }
 
     private static string BuildLogLine(
-        DateTime timestamp,
+        DateTimeOffset timestamp,
         string level,
         string className,
         string? methodName,

@@ -79,9 +79,10 @@ public static class TjiddeLoggingBuilderExtensions
         // Register the default masked keys accessor
         builder.Services.TryAddSingleton<IMaskedKeysAccessor, GlobalMaskedKeysAccessor>();
 
-        // Register the provider
+        // Register the provider through a factory, so the constructor choice never depends on the container:
+        // a TimeProvider registered in DI is used for timestamps, otherwise TimeProvider.System.
         builder.Services.TryAddEnumerable(
-            ServiceDescriptor.Singleton<ILoggerProvider, TjiddeLoggerProvider>());
+            ServiceDescriptor.Singleton<ILoggerProvider, TjiddeLoggerProvider>(CreateProvider));
 
         return builder;
     }
@@ -111,6 +112,13 @@ public static class TjiddeLoggingBuilderExtensions
         builder.Services.Configure<TjiddeLoggerOptions>(options => options.OutputFormat = TjiddeLogOutputFormat.Text);
         return builder;
     }
+
+    private static TjiddeLoggerProvider CreateProvider(IServiceProvider services)
+        => new(
+            services.GetRequiredService<IOptionsMonitor<TjiddeLoggerOptions>>(),
+            services.GetRequiredService<ICustomerContextAccessor>(),
+            services.GetRequiredService<IMaskedKeysAccessor>(),
+            services.GetService<TimeProvider>() ?? TimeProvider.System);
 
     /// <summary>Signals an options change when the bound configuration section reloads.</summary>
     private sealed class ConfigurationSectionChangeTokenSource : IOptionsChangeTokenSource<TjiddeLoggerOptions>
