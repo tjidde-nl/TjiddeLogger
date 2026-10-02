@@ -257,6 +257,7 @@ public sealed class LogOutputFormatTests
         output.Trim().Should().MatchRegex(LogLinePattern);
     }
 
+#pragma warning disable CS0618 // Obsolete MinimumLevel/CategoryMinimumLevels: verifies the legacy filter still works until 2.0
     [Fact]
     public void LogMetrics_IsNotDroppedByMinimumLevel()
     {
@@ -272,6 +273,7 @@ public sealed class LogOutputFormatTests
         output.Should().NotContain("plain information");
         output.Should().Contain("[METRICS]");
     }
+#pragma warning restore CS0618
 
     [Fact]
     public void LogMetrics_JsonOutput_UsesMetricsLevelAndEvent()
@@ -315,6 +317,7 @@ public sealed class LogOutputFormatTests
         root.TryGetProperty("@timestamp", out _).Should().BeTrue();
     }
 
+#pragma warning disable CS0618 // Obsolete MinimumLevel/CategoryMinimumLevels: verifies the legacy filter still works until 2.0
     [Fact]
     public void IsEnabled_UsesCategoryMinimumLevels_WithNamespaceFallback()
     {
@@ -333,6 +336,7 @@ public sealed class LogOutputFormatTests
         logger.IsEnabled(LogLevel.Warning).Should().BeFalse();
         logger.IsEnabled(LogLevel.Error).Should().BeTrue();
     }
+#pragma warning restore CS0618
 
     [Fact]
     public void Log_OpenTelemetryExportEnabled_AddsEventToCurrentActivity()

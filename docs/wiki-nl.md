@@ -159,12 +159,6 @@ Je kunt de Tjidde-logger in code configureren of rechtstreeks vanuit `appsetting
 {
   "TjiddeLogger": {
     "OutputFormat": "Json",
-    "MinimumLevel": "Information",
-    "CategoryMinimumLevels": {
-      "Default": "Warning",
-      "MyCompany.MyApp": "Information",
-      "MyCompany.MyApp.Services.OrderService": "Debug"
-    },
     "EnableOpenTelemetryExport": true,
     "OpenTelemetryActivitySourceName": "MyCompany.MyApp",
     "OpenTelemetryCreateFallbackActivity": false,
@@ -183,6 +177,49 @@ builder.Logging.AddTjiddeLogger(builder.Configuration);
 // of bind een expliciete sectie:
 builder.Logging.AddTjiddeLogger(builder.Configuration.GetSection("TjiddeLogger"));
 ```
+
+Logniveaus horen niet in de sectie `TjiddeLogger`: stel ze in onder `Logging`, zie [Logniveaus per categorie](#logniveaus-per-categorie).
+
+### Logniveaus per categorie
+
+Gebruik de standaardsectie `Logging` van `appsettings.json`. De provider-alias van Tjidde.Logging is `Tjidde`, dus `Logging:Tjidde:LogLevel` geldt alleen voor Tjidde.Logging en `Logging:LogLevel` voor alle providers. Voor Tjidde.Logging gaat een regel onder `Logging:Tjidde:LogLevel` voor op een regel onder `Logging:LogLevel`. Sleutels zijn categorieën of namespace-prefixen (de langste match wint); `Default` is de terugvaloptie:
+
+```json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    },
+    "Tjidde": {
+      "LogLevel": {
+        "Default": "Information",
+        "MyCompany.MyApp.Services.OrderService": "Debug",
+        "MyCompany.MyApp.Polling": "Warning"
+      }
+    }
+  }
+}
+```
+
+Hetzelfde in code:
+
+```csharp
+builder.Logging.AddFilter<TjiddeLoggerProvider>("MyCompany.MyApp.Services.OrderService", LogLevel.Debug);
+```
+
+Deze filters worden net als de andere opties opnieuw ingelezen als de configuratie verandert.
+
+**Verouderd: `MinimumLevel` en `CategoryMinimumLevels`.** `TjiddeLogger:MinimumLevel` en `TjiddeLogger:CategoryMinimumLevels` doen hetzelfde als de filters hierboven en verdwijnen in 2.0. Tot die tijd werken ze nog en worden ze nog uit de configuratie gelezen. Ze filteren *na* de `Logging`-filters; een regel moet dus door beide heen en het strengste niveau wint:
+
+| `Logging:Tjidde:LogLevel:Default` | `TjiddeLogger:MinimumLevel` | Laagste niveau dat wordt geschreven |
+|---|---|---|
+| `Warning` | `Debug` | `Warning` |
+| `Debug` | `Warning` | `Warning` |
+| `Debug` | *(niet ingesteld, `Trace`)* | `Debug` |
+| *(niet ingesteld en geen `Logging:LogLevel`-regel: frameworkstandaard `Information`)* | `Debug` | `Information` |
+
+De laatste rij verrast vaak: zonder `Logging`-regel is het standaardminimum van het framework `Information`, dus alleen `MinimumLevel = Debug` toont nooit debugregels. Zet de waarden over naar `Logging:Tjidde:LogLevel` (sleutels en `Default` werken hetzelfde).
 
 ### Dynamisch censureren (tijdens runtime)
 
@@ -224,8 +261,8 @@ builder.Logging.AddTjiddeLogger(options =>
 | Optie | Type | Standaard | Beschrijving |
 |---|---|---|---|
 | `OutputFormat` | `TjiddeLogOutputFormat` | `Text` | Weergavemodus: `Text` of `Json` (Elasticsearch-vriendelijke JSON-regel). |
-| `MinimumLevel` | `LogLevel` | `Trace` | Globaal minimum logniveau als er geen categorie-override matcht. |
-| `CategoryMinimumLevels` | `IDictionary<string, LogLevel>` | `{}` | Categorie-/namespace-/klasse-specifieke minimum niveaus. Ondersteunt `Default` en prefix-matching zoals `Logging:LogLevel`. |
+| `MinimumLevel` *(verouderd)* | `LogLevel` | `Trace` | Globaal minimum logniveau als er geen categorie-override matcht. Gebruik `Logging:Tjidde:LogLevel`; verdwijnt in 2.0. |
+| `CategoryMinimumLevels` *(verouderd)* | `IDictionary<string, LogLevel>` | `{}` | Categorie-/namespace-/klasse-specifieke minimum niveaus. Gebruik `Logging:Tjidde:LogLevel`; verdwijnt in 2.0. |
 | `EnableOpenTelemetryExport` | `bool` | `false` | Stuurt elke logregel als OpenTelemetry-event op de huidige `Activity` (voor OTEL-pipelines). |
 | `OpenTelemetryActivitySourceName` | `string` | `Tjidde.Logging` | Activity source-naam voor optionele fallback-activity creatie. |
 | `OpenTelemetryCreateFallbackActivity` | `bool` | `false` | Maakt een korte interne activity als er geen huidige `Activity` beschikbaar is. |
@@ -519,7 +556,7 @@ Het label `[METRICS]` wordt in **Magenta** weergegeven in de console voor eenvou
 
 ### Filteren
 
-Het eigen `MinimumLevel` en `CategoryMinimumLevels` van Tjidde.Logging laten metrics-regels altijd door. Filters van `Microsoft.Extensions.Logging` zelf (bijvoorbeeld `Logging:LogLevel:Default` in `appsettings.json`) behandelen ze als `Information`; een categorie die op `Warning` of hoger staat, filtert dus ook haar metrics-regels.
+Het eigen (verouderde) `MinimumLevel` en `CategoryMinimumLevels` van Tjidde.Logging laten metrics-regels altijd door. Filters van `Microsoft.Extensions.Logging` zelf (bijvoorbeeld `Logging:LogLevel:Default` of `Logging:Tjidde:LogLevel:Default` in `appsettings.json`) behandelen ze als `Information`; een categorie die op `Warning` of hoger staat, filtert dus ook haar metrics-regels.
 
 ### Het verouderde `Metrics`-logniveau
 

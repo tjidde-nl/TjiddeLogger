@@ -52,7 +52,10 @@ internal sealed class TjiddeLoggerConfiguration : IDisposable
     /// The minimum level for <paramref name="categoryName"/>: an exact match in
     /// <see cref="TjiddeLoggerOptions.CategoryMinimumLevels"/>, else the longest matching namespace prefix,
     /// else <c>Default</c>, else <see cref="TjiddeLoggerOptions.MinimumLevel"/>.
+    /// Both options are obsolete but still honored for backwards compatibility until 2.0; this filter runs after
+    /// the Microsoft.Extensions.Logging filters (<c>Logging:Tjidde:LogLevel</c>), so the stricter one wins.
     /// </summary>
+#pragma warning disable CS0618 // MinimumLevel and CategoryMinimumLevels are obsolete; still applied for backwards compatibility
     public LogLevel ResolveMinimumLevel(string categoryName)
     {
         var levels = Options.CategoryMinimumLevels;
@@ -79,6 +82,7 @@ internal sealed class TjiddeLoggerConfiguration : IDisposable
 
         return Options.MinimumLevel;
     }
+#pragma warning restore CS0618
 
     /// <summary>
     /// Disposes the fallback activity source. A log call that still uses this configuration stays safe:

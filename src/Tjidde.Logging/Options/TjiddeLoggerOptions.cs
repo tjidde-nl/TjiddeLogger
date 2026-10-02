@@ -13,10 +13,20 @@ public sealed class TjiddeLoggerOptions
     /// </summary>
     public TjiddeLogOutputFormat OutputFormat { get; set; } = TjiddeLogOutputFormat.Text;
 
+    internal const string MinimumLevelObsoleteMessage =
+        "Use the standard Microsoft.Extensions.Logging filters instead: Logging:Tjidde:LogLevel in appsettings.json " +
+        "(or AddFilter<TjiddeLoggerProvider>(...) in code). This option will be removed in 2.0.";
+
     /// <summary>
     /// Global minimum log level if no category-specific override is matched.
     /// Default: Trace.
     /// </summary>
+    /// <remarks>
+    /// Obsolete: use <c>Logging:Tjidde:LogLevel</c> in <c>appsettings.json</c> (or
+    /// <c>AddFilter&lt;TjiddeLoggerProvider&gt;</c>) instead. This filter runs after the
+    /// Microsoft.Extensions.Logging filters, so the stricter of the two wins. It will be removed in 2.0.
+    /// </remarks>
+    [Obsolete(MinimumLevelObsoleteMessage)]
     public LogLevel MinimumLevel { get; set; } = LogLevel.Trace;
 
     /// <summary>
@@ -24,6 +34,12 @@ public sealed class TjiddeLoggerOptions
     /// Keys can be fully-qualified categories (for example My.App.Service), namespace prefixes
     /// (for example My.App), or Default for fallback behavior.
     /// </summary>
+    /// <remarks>
+    /// Obsolete: use <c>Logging:Tjidde:LogLevel</c> in <c>appsettings.json</c> (or
+    /// <c>AddFilter&lt;TjiddeLoggerProvider&gt;</c>) instead. This filter runs after the
+    /// Microsoft.Extensions.Logging filters, so the stricter of the two wins. It will be removed in 2.0.
+    /// </remarks>
+    [Obsolete(MinimumLevelObsoleteMessage)]
     public IDictionary<string, LogLevel> CategoryMinimumLevels { get; set; } =
         new Dictionary<string, LogLevel>(StringComparer.OrdinalIgnoreCase);
 

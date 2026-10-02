@@ -159,12 +159,6 @@ You can configure Tjidde logger either in code or directly from `appsettings.jso
 {
   "TjiddeLogger": {
     "OutputFormat": "Json",
-    "MinimumLevel": "Information",
-    "CategoryMinimumLevels": {
-      "Default": "Warning",
-      "MyCompany.MyApp": "Information",
-      "MyCompany.MyApp.Services.OrderService": "Debug"
-    },
     "EnableOpenTelemetryExport": true,
     "OpenTelemetryActivitySourceName": "MyCompany.MyApp",
     "OpenTelemetryCreateFallbackActivity": false,
@@ -183,6 +177,49 @@ builder.Logging.AddTjiddeLogger(builder.Configuration);
 // or bind an explicit section:
 builder.Logging.AddTjiddeLogger(builder.Configuration.GetSection("TjiddeLogger"));
 ```
+
+Log levels are not part of the `TjiddeLogger` section: configure them under `Logging`, see [Log levels per category](#log-levels-per-category).
+
+### Log levels per category
+
+Use the standard `Logging` section of `appsettings.json`. Tjidde.Logging's provider alias is `Tjidde`, so `Logging:Tjidde:LogLevel` applies to Tjidde.Logging only, while `Logging:LogLevel` applies to every provider. For Tjidde.Logging, a rule under `Logging:Tjidde:LogLevel` takes precedence over one under `Logging:LogLevel`. Keys are categories or namespace prefixes (the longest match wins) and `Default` is the fallback:
+
+```json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    },
+    "Tjidde": {
+      "LogLevel": {
+        "Default": "Information",
+        "MyCompany.MyApp.Services.OrderService": "Debug",
+        "MyCompany.MyApp.Polling": "Warning"
+      }
+    }
+  }
+}
+```
+
+The same in code:
+
+```csharp
+builder.Logging.AddFilter<TjiddeLoggerProvider>("MyCompany.MyApp.Services.OrderService", LogLevel.Debug);
+```
+
+These filters are reloaded with the configuration, like the other options.
+
+**Obsolete: `MinimumLevel` and `CategoryMinimumLevels`.** `TjiddeLogger:MinimumLevel` and `TjiddeLogger:CategoryMinimumLevels` duplicate the filters above and will be removed in 2.0. Until then they still work and are still bound from configuration. They run *after* the `Logging` filters, so an entry must pass both and the stricter level wins:
+
+| `Logging:Tjidde:LogLevel:Default` | `TjiddeLogger:MinimumLevel` | Lowest level written |
+|---|---|---|
+| `Warning` | `Debug` | `Warning` |
+| `Debug` | `Warning` | `Warning` |
+| `Debug` | *(not set, `Trace`)* | `Debug` |
+| *(not set, and no `Logging:LogLevel` rule: framework default `Information`)* | `Debug` | `Information` |
+
+The last row is a common surprise: without a `Logging` rule, the framework's default minimum is `Information`, so `MinimumLevel = Debug` alone never shows debug entries. Move the values to `Logging:Tjidde:LogLevel` (keys and `Default` work the same way).
 
 ### Dynamic Censoring (at runtime)
 
@@ -224,8 +261,8 @@ builder.Logging.AddTjiddeLogger(options =>
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `OutputFormat` | `TjiddeLogOutputFormat` | `Text` | Log rendering mode: `Text` or `Json` (Elasticsearch-friendly JSON line). |
-| `MinimumLevel` | `LogLevel` | `Trace` | Global minimum log level fallback when no category override matches. |
-| `CategoryMinimumLevels` | `IDictionary<string, LogLevel>` | `{}` | Category/namespace/class-specific minimum levels. Supports `Default` fallback and prefix matching like `Logging:LogLevel`. |
+| `MinimumLevel` *(obsolete)* | `LogLevel` | `Trace` | Global minimum log level fallback when no category override matches. Use `Logging:Tjidde:LogLevel` instead; removed in 2.0. |
+| `CategoryMinimumLevels` *(obsolete)* | `IDictionary<string, LogLevel>` | `{}` | Category/namespace/class-specific minimum levels. Use `Logging:Tjidde:LogLevel` instead; removed in 2.0. |
 | `EnableOpenTelemetryExport` | `bool` | `false` | Emits each log as an OpenTelemetry event on the current `Activity` (for OTEL pipelines). |
 | `OpenTelemetryActivitySourceName` | `string` | `Tjidde.Logging` | Activity source name used for optional fallback activity creation. |
 | `OpenTelemetryCreateFallbackActivity` | `bool` | `false` | Creates a short-lived internal activity if no current `Activity` exists. |
@@ -519,7 +556,7 @@ The `[METRICS]` label is printed in **Magenta** in the console for easy visual d
 
 ### Filtering
 
-Tjidde.Logging's own `MinimumLevel` and `CategoryMinimumLevels` never drop metrics entries. Filters of `Microsoft.Extensions.Logging` itself (for example `Logging:LogLevel:Default` in `appsettings.json`) treat them as `Information`, so a category filtered to `Warning` or higher also filters its metrics entries.
+Tjidde.Logging's own (obsolete) `MinimumLevel` and `CategoryMinimumLevels` never drop metrics entries. Filters of `Microsoft.Extensions.Logging` itself (for example `Logging:LogLevel:Default` or `Logging:Tjidde:LogLevel:Default` in `appsettings.json`) treat them as `Information`, so a category filtered to `Warning` or higher also filters its metrics entries.
 
 ### The obsolete `Metrics` log level
 

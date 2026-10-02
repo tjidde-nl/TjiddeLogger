@@ -102,6 +102,7 @@ public sealed class TjiddeLoggingRegistrationTests
         accessor.Should().BeOfType<CustomTestAccessor>();
     }
 
+#pragma warning disable CS0618 // Obsolete MinimumLevel/CategoryMinimumLevels: verifies the legacy filter still works until 2.0
     [Fact]
     public void AddTjiddeLogger_WithConfiguration_BindsOptionsFromSection()
     {
@@ -136,6 +137,7 @@ public sealed class TjiddeLoggingRegistrationTests
         options.CategoryMinimumLevels["Default"].Should().Be(LogLevel.Error);
         options.CategoryMinimumLevels["My.Namespace"].Should().Be(LogLevel.Information);
     }
+#pragma warning restore CS0618
 
     private sealed class CustomTestAccessor : ICustomerContextAccessor
     {

@@ -81,6 +81,7 @@ public sealed class OptionsReloadTests
         json.RootElement.GetProperty("message").GetString().Should().Be("after reload password=***");
     }
 
+#pragma warning disable CS0618 // Obsolete MinimumLevel/CategoryMinimumLevels: verifies the legacy filter still works until 2.0
     [Fact]
     public void OptionsMonitorChange_AppliesCategoryLevelsToExistingLogger()
     {
@@ -101,7 +102,9 @@ public sealed class OptionsReloadTests
         logger.IsEnabled(LogLevel.Warning).Should().BeFalse();
         logger.IsEnabled(LogLevel.Error).Should().BeTrue();
     }
+#pragma warning restore CS0618
 
+#pragma warning disable CS0618 // Obsolete MinimumLevel/CategoryMinimumLevels: verifies the legacy filter still works until 2.0
     [Fact]
     public void OptionsMonitorChange_ForNamedOptions_IsIgnored()
     {
@@ -113,6 +116,7 @@ public sealed class OptionsReloadTests
 
         logger.IsEnabled(LogLevel.Debug).Should().BeFalse();
     }
+#pragma warning restore CS0618
 
     [Fact]
     public void Dispose_StopsListeningForOptionsChanges()

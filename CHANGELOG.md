@@ -24,6 +24,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - A custom `IMaskedKeysAccessor` that returns the same mutable collection on every call: added or removed keys were not picked up after the first log call. The masker now compares the keys by content (only `MaskedKeysContext` snapshots are compared by reference), builds from a copy, and no longer lets a concurrent rebuild overwrite a newer key set.
 
 ### Deprecated
+- `TjiddeLoggerOptions.MinimumLevel` and `TjiddeLoggerOptions.CategoryMinimumLevels` (`TjiddeLogger:MinimumLevel`, `TjiddeLogger:CategoryMinimumLevels`) are marked `[Obsolete]` and will be removed in 2.0. Use the standard filter `Logging:Tjidde:LogLevel` in `appsettings.json` (or `AddFilter<TjiddeLoggerProvider>(...)`) instead. They still work and are still bound from configuration: the `Logging` filters run first, then these, so the stricter level wins.
 - `MetricsLoggerExtensions.Metrics` (`(LogLevel)10`): not a valid `LogLevel`, and other providers throw on it. Use `LogMetrics(...)`, or `System.Diagnostics.Metrics` for real application metrics. Tjidde.Logging still recognizes the value.
 
 ## [1.0.1] - 2026-10-02

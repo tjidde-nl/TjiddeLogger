@@ -79,10 +79,7 @@ builder.Logging.AddTjiddeLogger(options =>
 
 ### 3. Configure log levels
 
-Two filters apply, and an entry must pass both:
-
-1. The standard `Logging` section: `Logging:LogLevel`, or `Logging:Tjidde:LogLevel` for this provider only. Without configuration the minimum is `Information`, so `Debug` and `Trace` entries are dropped here unless you lower it.
-2. `TjiddeLogger:MinimumLevel` and `TjiddeLogger:CategoryMinimumLevels`. The default is `Trace`, so this filter passes everything unless you set it.
+Use the standard `Logging` section. `Logging:Tjidde:LogLevel` applies to this provider only (alias `Tjidde`) and takes precedence over `Logging:LogLevel`, which applies to all providers. Without any rule the minimum is `Information`, so `Debug` and `Trace` entries are dropped unless you lower it. In code: `builder.Logging.AddFilter<TjiddeLoggerProvider>("Shop.Orders", LogLevel.Debug)`.
 
 ```json
 {
@@ -90,6 +87,12 @@ Two filters apply, and an entry must pass both:
     "LogLevel": {
       "Default": "Information",
       "Microsoft.AspNetCore": "Warning"
+    },
+    "Tjidde": {
+      "LogLevel": {
+        "Default": "Information",
+        "Shop.Orders": "Debug"
+      }
     }
   },
   "TjiddeLogger": {
@@ -101,7 +104,9 @@ Two filters apply, and an entry must pass both:
 }
 ```
 
-Options are read once per log category, when the first logger for that category is created. Changing configuration while the app runs has no effect; restart the app.
+Do not use `TjiddeLogger:MinimumLevel` or `TjiddeLogger:CategoryMinimumLevels` in new code: they are obsolete (compiler warning CS0618) and will be removed in 2.0. They still work as a second filter after the `Logging` section, so an entry must pass both and the stricter level wins. When you find them, move the values to `Logging:Tjidde:LogLevel` (same keys, same `Default` fallback).
+
+With `AddTjiddeLogger(builder.Configuration)` and `reloadOnChange` (the default for `appsettings.json`), changes to the `TjiddeLogger` and `Logging` sections apply to existing loggers without a restart.
 
 ### 4. Set the customer context (optional)
 
@@ -283,8 +288,8 @@ Section name in `appsettings.json`: `TjiddeLogger`.
 | Option | Type | Default | Meaning |
 |---|---|---|---|
 | `OutputFormat` | `TjiddeLogOutputFormat` | `Text` | `Text` or `Json`. |
-| `MinimumLevel` | `LogLevel` | `Trace` | Minimum level when no category rule matches. |
-| `CategoryMinimumLevels` | `IDictionary<string, LogLevel>` | empty | Minimum level per category or namespace prefix; the key `Default` is the fallback. |
+| `MinimumLevel` | `LogLevel` | `Trace` | Obsolete, removed in 2.0: use `Logging:Tjidde:LogLevel`. Minimum level when no category rule matches. |
+| `CategoryMinimumLevels` | `IDictionary<string, LogLevel>` | empty | Obsolete, removed in 2.0: use `Logging:Tjidde:LogLevel`. Minimum level per category or namespace prefix; the key `Default` is the fallback. |
 | `IncludeScopes` | `bool` | `true` | Append scope values to each entry. Also required for `BeginMethodScope`. |
 | `UseUtcTimestamp` | `bool` | `false` | Write timestamps in UTC instead of local time. |
 | `ResolveMethodNameFromStackTrace` | `bool` | `false` | Find the method name from the stack trace when no method scope is active. Slow. |
@@ -300,7 +305,8 @@ Section name in `appsettings.json`: `TjiddeLogger`.
 ## Checklist
 
 - [ ] `ClearProviders()` is called before `AddTjiddeLogger(...)`.
-- [ ] `Logging:LogLevel` is low enough for the levels the app needs.
+- [ ] `Logging:LogLevel` / `Logging:Tjidde:LogLevel` is low enough for the levels the app needs.
+- [ ] No `TjiddeLogger:MinimumLevel` or `TjiddeLogger:CategoryMinimumLevels` (obsolete); levels live in `Logging:Tjidde:LogLevel`.
 - [ ] The customer context is set per request or job, if used.
 - [ ] Log calls use message templates with named placeholders, never `$"..."`.
 - [ ] Placeholders that can hold secrets are named after a sensitive key, or the name is added to `AdditionalSensitiveKeys`.
