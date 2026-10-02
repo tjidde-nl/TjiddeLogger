@@ -36,7 +36,8 @@ public sealed class SensitiveDataMasker : ISensitiveDataMasker
     private readonly TimeSpan _matchTimeout;
     private readonly KeySet _keys;
     private readonly IMaskedKeysAccessor? _runtimeKeysAccessor;
-    // True when the accessor hands out immutable snapshots (MaskedKeysContext), so an unchanged reference means unchanged keys.
+    // True when the accessor hands out immutable snapshots (MaskedKeysStore, MaskedKeysContext), so an unchanged reference
+    // means unchanged keys. Any other accessor may return a collection it changes later, so it is compared by content.
     private readonly bool _runtimeKeysAreSnapshots;
     private KeySet? _runtimeKeys;
 
@@ -73,7 +74,7 @@ public sealed class SensitiveDataMasker : ISensitiveDataMasker
         _placeholder = placeholder;
         _matchTimeout = matchTimeout;
         _runtimeKeysAccessor = runtimeKeysAccessor;
-        _runtimeKeysAreSnapshots = runtimeKeysAccessor is GlobalMaskedKeysAccessor;
+        _runtimeKeysAreSnapshots = runtimeKeysAccessor is GlobalMaskedKeysAccessor or MaskedKeysStore;
 
         var literals = dynamicKeys?.ToArray() ?? [];
         _keys = new KeySet(

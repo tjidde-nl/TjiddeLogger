@@ -113,6 +113,23 @@ public static class TjiddeLoggingBuilderExtensions
         return builder;
     }
 
+    /// <summary>
+    /// Gives this host its own <see cref="MaskedKeysStore"/> instead of the process-wide <see cref="MaskedKeysContext"/>.
+    /// The store is registered as a singleton; inject <see cref="MaskedKeysStore"/> to add or remove keys. Changes apply
+    /// immediately to the loggers of this host only, so hosts and tests in the same process do not share keys.
+    /// Replaces any <see cref="IMaskedKeysAccessor"/> registered earlier; can be called before or after <c>AddTjiddeLogger</c>.
+    /// </summary>
+    /// <param name="builder">The <see cref="ILoggingBuilder"/>.</param>
+    /// <returns>The <see cref="ILoggingBuilder"/> for chaining.</returns>
+    public static ILoggingBuilder UseIsolatedMaskedKeys(this ILoggingBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.Services.TryAddSingleton<MaskedKeysStore>();
+        builder.Services.Replace(ServiceDescriptor.Singleton<IMaskedKeysAccessor>(
+            services => services.GetRequiredService<MaskedKeysStore>()));
+        return builder;
+    }
+
     private static TjiddeLoggerProvider CreateProvider(IServiceProvider services)
         => new(
             services.GetRequiredService<IOptionsMonitor<TjiddeLoggerOptions>>(),

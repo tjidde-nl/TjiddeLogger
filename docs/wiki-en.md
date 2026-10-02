@@ -239,6 +239,23 @@ _logger.LogInformation("Processing token SuperSecretToken for user PersonalID");
 MaskedKeysContext.Remove("PersonalID");
 ```
 
+`MaskedKeysContext` is the convenience variant: static and process-wide, so every host and every test in the process shares its keys.
+
+#### Isolated keys per host (recommended for testable code)
+
+Call `UseIsolatedMaskedKeys()` to give the host its own `MaskedKeysStore`, and inject that store where keys become known. Changes apply immediately to the existing loggers of that host only; two hosts (or two tests with their own `ServiceProvider`) never see each other's keys.
+
+```csharp
+builder.Logging.AddTjiddeLogger().UseIsolatedMaskedKeys();
+
+public sealed class TokenService(MaskedKeysStore maskedKeys)
+{
+    public void OnTokenIssued(string token) => maskedKeys.Add(token);   // also Remove, Clear, GetKeys
+}
+```
+
+You can also register your own `IMaskedKeysAccessor`. Keep `GetKeys()` cheap and thread-safe: the masker checks it on every log call. A collection that is replaced on every change (like `MaskedKeysStore` and `MaskedKeysContext` do) is the cheapest to check.
+
 ### Option 2: code-based options
 
 Pass an `Action<TjiddeLoggerOptions>` delegate to `AddTjiddeLogger` to customise behaviour:
@@ -346,7 +363,9 @@ Event tags include fields such as `log.level`, `log.message`, `log.category`, `e
 
 ## Customer Context
 
-The customer context allows you to tag every log entry with a customer or tenant identifier without passing it through every method call. It uses `AsyncLocal<T>` so it flows correctly through `async`/`await` chains.
+The customer context allows you to tag every log entry with a customer or tenant identifier without passing it through every method call. The logger reads it through `ICustomerContextAccessor`. The default, `AsyncLocalCustomerContextAccessor`, reads the static `CustomerContext`, which uses `AsyncLocal<T>` so it flows correctly through `async`/`await` chains.
+
+For testable code, register your own `ICustomerContextAccessor` as a singleton before `AddTjiddeLogger` (for example one that reads a claim from `IHttpContextAccessor`); in tests, register a fake that returns a fixed value. The static `CustomerContext` below is the convenience variant.
 
 ### Setting the context
 

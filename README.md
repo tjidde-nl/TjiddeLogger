@@ -88,9 +88,27 @@ In code, `builder.AddFilter<TjiddeLoggerProvider>("MyCompany.MyApp", LogLevel.De
 
 `TjiddeLoggerOptions.MinimumLevel` and `CategoryMinimumLevels` (`TjiddeLogger:MinimumLevel`, `TjiddeLogger:CategoryMinimumLevels`) are obsolete and will be removed in 2.0. They still work: the `Logging` filter runs first, then Tjidde's own filter, so an entry must pass both and the stricter level wins. Move these values to `Logging:Tjidde:LogLevel`.
 
+### Accessors and DI (recommended)
+
+The logger reads the customer context and the runtime masked keys through two DI abstractions: `ICustomerContextAccessor` and `IMaskedKeysAccessor`. For testable code, use these instead of the static classes:
+
+- **Customer context**: register your own `ICustomerContextAccessor` (for example one that reads the HTTP context, see below). In tests, register a fake that returns a fixed value.
+- **Masked keys**: call `UseIsolatedMaskedKeys()` and inject `MaskedKeysStore`. Each host (and each test's `ServiceProvider`) gets its own keys; changes apply immediately to that host's existing loggers.
+
+```csharp
+services.AddLogging(builder => builder.AddTjiddeLogger().UseIsolatedMaskedKeys());
+
+public sealed class VaultService(MaskedKeysStore maskedKeys)
+{
+    public void OnSecretLoaded(string secret) => maskedKeys.Add(secret);
+}
+```
+
+The static `CustomerContext` and `MaskedKeysContext` remain the defaults and are the convenience variant: no DI needed, but `MaskedKeysContext` is shared by every host and test in the process.
+
 ### Setting customer context
 
-Use `CustomerContext.Set(...)` at the start of a request, job, or operation. It flows through the async call chain automatically.
+Use `CustomerContext.Set(...)` at the start of a request, job, or operation. It flows through the async call chain automatically. This works with the default `AsyncLocalCustomerContextAccessor`.
 
 ```csharp
 // In middleware, a job handler, or service entry point:
@@ -217,6 +235,14 @@ Masking is applied to:
 - Structured log property names
 - Dictionary/state collections passed to the logger
 
+### Runtime keys
+
+Values that are only known at runtime (a token from a vault, a customer code) can be added while the app runs. They are masked as literal values anywhere in the output and as key names, and apply immediately to existing loggers.
+
+- Recommended: `UseIsolatedMaskedKeys()` and inject `MaskedKeysStore` (`Add`, `Remove`, `Clear`, `GetKeys`). The keys belong to that host only.
+- Convenience: the static `MaskedKeysContext.Add(...)` / `Remove(...)` / `Clear()`, used by default. These keys are process-wide.
+- Custom: register your own `IMaskedKeysAccessor`. Keep `GetKeys()` cheap and thread-safe; returning an immutable snapshot is fastest.
+
 ### Security notes
 
 > **Important:** Sensitive data masking significantly reduces the risk of leaking secrets in logs, but it is **not foolproof**. It cannot detect:
@@ -257,6 +283,9 @@ Tjidde.Logging/
 │   ├── TjiddeLogger.cs                 # ILogger implementation
 │   └── TjiddeLoggerProvider.cs         # ILoggerProvider implementation
 ├── Masking/
+│   ├── IMaskedKeysAccessor.cs            # Runtime keys abstraction (+ GlobalMaskedKeysAccessor)
+│   ├── MaskedKeysStore.cs                # Per-host runtime keys (UseIsolatedMaskedKeys)
+│   ├── MaskedKeysContext.cs              # Static, process-wide runtime keys
 │   ├── ISensitiveDataMasker.cs           # Masking contract
 │   └── SensitiveDataMasker.cs           # Default masking implementation
 └── Options/

@@ -35,8 +35,10 @@ public sealed class SharedMaskerTests
         first.Configuration.Masker.MaskValue("password", "secret").Should().Be("***");
     }
 
-    [Fact]
-    public void ConcurrentLogging_WhileMaskedKeysChange_KeepsMaskingAndNeverThrows()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ConcurrentLogging_WhileMaskedKeysChange_KeepsMaskingAndNeverThrows(bool useGlobalContext)
     {
         var id = Guid.NewGuid().ToString("N");
         var permanentKey = $"perm-{id}";
@@ -47,12 +49,17 @@ public sealed class SharedMaskerTests
         var original = Console.Out;
         using var writer = new StringWriter();
         var errors = new List<Exception>();
-        MaskedKeysContext.Add(permanentKey);
+        // Both snapshot accessors: the process-wide MaskedKeysContext and an isolated MaskedKeysStore
+        var store = new MaskedKeysStore();
+        IMaskedKeysAccessor accessor = useGlobalContext ? new GlobalMaskedKeysAccessor() : store;
+        Action<string[]> add = useGlobalContext ? MaskedKeysContext.Add : store.Add;
+        Action<string[]> remove = useGlobalContext ? MaskedKeysContext.Remove : store.Remove;
+        add([permanentKey]);
         try
         {
             Console.SetOut(writer);
             var monitor = new TestOptionsMonitor(new TjiddeLoggerOptions());
-            using (var provider = new TjiddeLoggerProvider(monitor, new AsyncLocalCustomerContextAccessor(), new GlobalMaskedKeysAccessor()))
+            using (var provider = new TjiddeLoggerProvider(monitor, new AsyncLocalCustomerContextAccessor(), accessor))
             {
                 using var stop = new CancellationTokenSource();
                 var churn = Task.Run(() =>
@@ -61,8 +68,8 @@ public sealed class SharedMaskerTests
                     while (!stop.IsCancellationRequested)
                     {
                         var key = churnKeys[i++ % churnKeys.Length];
-                        MaskedKeysContext.Add(key);
-                        MaskedKeysContext.Remove(key);
+                        add([key]);
+                        remove([key]);
                     }
                 });
 
@@ -97,8 +104,8 @@ public sealed class SharedMaskerTests
         finally
         {
             Console.SetOut(original);
-            MaskedKeysContext.Remove(permanentKey);
-            MaskedKeysContext.Remove(churnKeys);
+            remove([permanentKey]);
+            remove(churnKeys);
         }
 
         errors.Should().BeEmpty();

@@ -18,10 +18,12 @@ Target frameworks: `net7.0`, `net8.0`, `net9.0`, `net10.0`.
 
 | Namespace | Contains |
 |---|---|
-| `Tjidde.Logging.Extensions` | `AddTjiddeLogger`, `UseTjiddeJsonFormat`, `UseTjiddeTextFormat`, `BeginMethodScope`, `LogMetrics` |
+| `Tjidde.Logging.Extensions` | `AddTjiddeLogger`, `UseTjiddeJsonFormat`, `UseTjiddeTextFormat`, `UseIsolatedMaskedKeys`, `BeginMethodScope`, `LogMetrics` |
 | `Tjidde.Logging.Options` | `TjiddeLoggerOptions`, `TjiddeLogOutputFormat` |
-| `Tjidde.Logging.Context` | `CustomerContext`, `ICustomerContextAccessor` |
-| `Tjidde.Logging.Masking` | `MaskedKeysContext` |
+| `Tjidde.Logging.Context` | `ICustomerContextAccessor`, `AsyncLocalCustomerContextAccessor`, `CustomerContext` |
+| `Tjidde.Logging.Masking` | `IMaskedKeysAccessor`, `MaskedKeysStore`, `MaskedKeysContext` |
+
+Prefer the DI route for testable code: implement `ICustomerContextAccessor` and use `UseIsolatedMaskedKeys()` with an injected `MaskedKeysStore`. The static `CustomerContext` and `MaskedKeysContext` are the convenience defaults; `MaskedKeysContext` is shared by every host and test in the process.
 
 ## Integration steps
 
@@ -110,7 +112,7 @@ With `AddTjiddeLogger(builder.Configuration)` and `reloadOnChange` (the default 
 
 ### 4. Set the customer context (optional)
 
-Each entry can carry a customer or tenant id: `Client=>…` in text output, `customer` in JSON. Set it at the start of every request:
+Each entry can carry a customer or tenant id: `Client=>…` in text output, `customer` in JSON. The logger reads it through `ICustomerContextAccessor`; for testable code, implement that interface (see below). The quickest route is the static `CustomerContext`, read by the default accessor. Set it at the start of every request:
 
 ```csharp
 using Tjidde.Logging.Context;
@@ -132,7 +134,7 @@ app.Use(async (context, next) =>
 
 `CustomerContext` is stored in an `AsyncLocal`, so the value flows through `await` calls within that request only. In background jobs, call `CustomerContext.Set(...)` at the start of each unit of work.
 
-Alternatively, supply the customer id yourself by implementing `ICustomerContextAccessor`. Register it as a **singleton** (the provider is a singleton and calls it for every entry) and keep it thread-safe:
+Recommended for testable code: supply the customer id yourself by implementing `ICustomerContextAccessor` (in tests, register a fake that returns a fixed value). Register it as a **singleton** (the provider is a singleton and calls it for every entry) and keep it thread-safe:
 
 ```csharp
 using Tjidde.Logging.Context;
@@ -214,11 +216,25 @@ Built-in sensitive keys: `password`, `wachtwoord`, `token`, `accesstoken`, `acce
 
 The pattern masking also masks the word after a sensitive key, so `Refreshing token cache` is written as `Refreshing token [REDACTED]`. Reword such messages if that matters.
 
-To mask values that are only known at runtime, use `MaskedKeysContext.Add(...)`. It masks the literal value anywhere in the output and also treats it as a sensitive key name. The change applies immediately to all loggers, including existing ones; `Remove(...)` and `Clear()` undo it.
+To mask values that are only known at runtime, add them as runtime keys. A runtime key masks the literal value anywhere in the output and is also treated as a sensitive key name. The change applies immediately to all loggers that use the keys, including existing ones; `Remove(...)` and `Clear()` undo it.
+
+Recommended: give the host its own `MaskedKeysStore` and inject it. Keys stay within that host, so tests and multiple hosts in one process do not affect each other:
 
 ```csharp
+using Tjidde.Logging.Extensions;
 using Tjidde.Logging.Masking;
 
+builder.Logging.AddTjiddeLogger().UseIsolatedMaskedKeys();
+
+public sealed class VaultClient(MaskedKeysStore maskedKeys)
+{
+    public void OnSecretLoaded(string apiKeyFromVault) => maskedKeys.Add(apiKeyFromVault);
+}
+```
+
+Convenience variant without DI (the default when `UseIsolatedMaskedKeys()` is not called): the static, process-wide `MaskedKeysContext`.
+
+```csharp
 MaskedKeysContext.Add(apiKeyFromVault);
 ```
 

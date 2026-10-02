@@ -239,6 +239,23 @@ _logger.LogInformation("Verwerken van token SuperGeheimToken voor gebruiker Pers
 MaskedKeysContext.Remove("PersoonsID");
 ```
 
+`MaskedKeysContext` is de gemaksvariant: statisch en procesbreed, dus elke host en elke test in het proces deelt dezelfde sleutels.
+
+#### Geisoleerde sleutels per host (aanbevolen voor testbare code)
+
+Roep `UseIsolatedMaskedKeys()` aan om de host een eigen `MaskedKeysStore` te geven, en injecteer die store waar sleutels bekend worden. Wijzigingen gelden direct voor de bestaande loggers van alleen die host; twee hosts (of twee tests met een eigen `ServiceProvider`) zien elkaars sleutels nooit.
+
+```csharp
+builder.Logging.AddTjiddeLogger().UseIsolatedMaskedKeys();
+
+public sealed class TokenService(MaskedKeysStore maskedKeys)
+{
+    public void OnTokenIssued(string token) => maskedKeys.Add(token);   // ook Remove, Clear, GetKeys
+}
+```
+
+Je kunt ook een eigen `IMaskedKeysAccessor` registreren. Houd `GetKeys()` goedkoop en thread-safe: de masker controleert het bij elke logaanroep. Een collectie die bij elke wijziging wordt vervangen (zoals `MaskedKeysStore` en `MaskedKeysContext` doen) is het goedkoopst te controleren.
+
 ### Optie 2: code-gebaseerde opties
 
 Geef een `Action<TjiddeLoggerOptions>`-delegate mee aan `AddTjiddeLogger` om het gedrag aan te passen:
@@ -346,7 +363,9 @@ Event-tags bevatten onder andere `log.level`, `log.message`, `log.category`, `ev
 
 ## Klantcontext
 
-De klantcontext maakt het mogelijk om elke logmelding te voorzien van een klant- of tenant-identificatie, zonder deze door elke methodeaanroep te hoeven doorgeven. Het maakt gebruik van `AsyncLocal<T>`, zodat het correct doorstroomt via `async`/`await`-ketens.
+De klantcontext maakt het mogelijk om elke logmelding te voorzien van een klant- of tenant-identificatie, zonder deze door elke methodeaanroep te hoeven doorgeven. De logger leest hem via `ICustomerContextAccessor`. De standaard, `AsyncLocalCustomerContextAccessor`, leest de statische `CustomerContext`, die `AsyncLocal<T>` gebruikt, zodat het correct doorstroomt via `async`/`await`-ketens.
+
+Voor testbare code registreer je een eigen `ICustomerContextAccessor` als singleton vóór `AddTjiddeLogger` (bijvoorbeeld een die een claim uit `IHttpContextAccessor` leest); in tests registreer je een fake die een vaste waarde teruggeeft. De statische `CustomerContext` hieronder is de gemaksvariant.
 
 ### Context instellen
 
