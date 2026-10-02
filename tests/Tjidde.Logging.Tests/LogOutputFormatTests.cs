@@ -228,18 +228,63 @@ public sealed class LogOutputFormatTests
     }
 
     [Fact]
-    public void Log_MetricsLevel_OutputContainsMetricsLabel()
+    public void Log_ObsoleteMetricsLevel_OutputContainsMetricsLabel()
     {
         CustomerContext.Clear();
         var logger = BuildLogger();
 
         var output = CaptureConsoleOutput(() =>
+#pragma warning disable CS0618 // (LogLevel)10 must keep working for existing callers
             logger.Log(MetricsLoggerExtensions.Metrics, new EventId(0), "requests_total=42",
                 null, (s, _) => s));
+#pragma warning restore CS0618
 
         output.Should().Contain("[METRICS]");
         output.Should().Contain("requests_total=42");
         output.Trim().Should().MatchRegex(LogLinePattern);
+    }
+
+    [Fact]
+    public void LogMetrics_OutputContainsMetricsLabel()
+    {
+        CustomerContext.Clear();
+        var logger = BuildLogger();
+
+        var output = CaptureConsoleOutput(() => logger.LogMetrics("requests_total={Count}", 42));
+
+        output.Should().Contain("[METRICS]");
+        output.Should().Contain("requests_total=42");
+        output.Trim().Should().MatchRegex(LogLinePattern);
+    }
+
+    [Fact]
+    public void LogMetrics_IsNotDroppedByMinimumLevel()
+    {
+        CustomerContext.Clear();
+        var logger = BuildLogger(options: new TjiddeLoggerOptions { MinimumLevel = LogLevel.Critical });
+
+        var output = CaptureConsoleOutput(() =>
+        {
+            logger.LogInformation("plain information");
+            logger.LogMetrics("requests_total={Count}", 42);
+        });
+
+        output.Should().NotContain("plain information");
+        output.Should().Contain("[METRICS]");
+    }
+
+    [Fact]
+    public void LogMetrics_JsonOutput_UsesMetricsLevelAndEvent()
+    {
+        CustomerContext.Clear();
+        var logger = BuildLogger(options: new TjiddeLoggerOptions { OutputFormat = TjiddeLogOutputFormat.Json });
+
+        var output = CaptureConsoleOutput(() => logger.LogMetrics("requests_total={Count}", 42));
+
+        using var doc = JsonDocument.Parse(output.Trim());
+        doc.RootElement.GetProperty("level").GetString().Should().Be("METRICS");
+        doc.RootElement.GetProperty("eventName").GetString().Should().Be("Metrics");
+        doc.RootElement.GetProperty("eventId").GetInt32().Should().Be(MetricsLoggerExtensions.MetricsEventIdValue);
     }
 
     [Fact]

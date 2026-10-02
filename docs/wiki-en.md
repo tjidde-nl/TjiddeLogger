@@ -11,7 +11,7 @@
 7. [Sensitive Data Masking](#sensitive-data-masking)
 8. [Exception Formatting](#exception-formatting)
 9. [Scopes](#scopes)
-10. [Metrics Log Level](#metrics-log-level)
+10. [Metrics Entries](#metrics-entries)
 11. [CI/CD (GitHub Actions)](#cicd-github-actions)
 12. [Future Work](#future-work)
 
@@ -26,7 +26,7 @@
 - Compact single-line exception formatting including inner exceptions and stack traces.
 - Customer context propagation via `AsyncLocal` — safe for async/await and multi-tenant scenarios.
 - Scope support for structured logging.
-- Custom `Metrics` log level for recording application metrics alongside regular log output.
+- `LogMetrics` for metric-style entries, shown as `[METRICS]` alongside regular log output.
 - Targets .NET 7, 8, 9, and 10.
 
 ---
@@ -131,7 +131,7 @@ YYYY-MM-DD: HH:mm:ss: [LEVEL] CS=>ClassName Method=>MethodName: Client=>Customer
 | Warning | `[WARNING]` |
 | Error | `[ERROR]` |
 | Critical | `[CRITICAL]` |
-| Metrics *(custom)* | `[METRICS]` |
+| Metrics *(Information + event `Metrics`)* | `[METRICS]` |
 
 ### Console colours
 
@@ -145,7 +145,7 @@ Each log level is printed in a distinct console colour for quick visual scanning
 | Warning | Yellow |
 | Error | Red |
 | Critical | Dark Red |
-| Metrics *(custom)* | Magenta |
+| Metrics *(Information + event `Metrics`)* | Magenta |
 
 ---
 
@@ -455,11 +455,13 @@ builder.Logging.AddTjiddeLogger(options =>
 
 ---
 
-## Metrics Log Level
+## Metrics Entries
 
-Tjidde.Logging provides a custom `Metrics` log level for recording application metrics (counters, timings, gauges) alongside regular log output. Because `Microsoft.Extensions.Logging.LogLevel` is a sealed enum, the Metrics level is implemented as a strongly-typed constant with value `10`.
+Tjidde.Logging provides `LogMetrics` for writing metric-style entries (counters, timings, gauges) alongside regular log output. A metrics entry is a normal `LogLevel.Information` entry with the event ID `MetricsLoggerExtensions.MetricsEventId` (`Id = 10000`, `Name = "Metrics"`). Tjidde.Logging recognizes that event and shows the entry as `[METRICS]`; other providers (for example `AddConsole()`) see an ordinary information entry.
 
-### Using the Metrics level
+> For real application metrics (dashboards, alerting, aggregation), use [`System.Diagnostics.Metrics`](https://learn.microsoft.com/dotnet/core/diagnostics/metrics) with OpenTelemetry or `dotnet-counters`. `LogMetrics` is meant for metric values you also want to see in the log.
+
+### Using LogMetrics
 
 Add the using directive and call `LogMetrics`:
 
@@ -475,8 +477,9 @@ _logger.LogMetrics("response_time_ms={ResponseTime}", elapsed.TotalMilliseconds)
 // With an exception
 _logger.LogMetrics(ex, "payment_failures_total={Count}", failureCount);
 
-// With an event ID
-_logger.LogMetrics(new EventId(200, "Throughput"), "throughput_rps={Rps}", rps);
+// With an event ID: an unnamed event ID gets the name "Metrics" and is shown as [METRICS];
+// an event ID with another name is passed on unchanged and shown as [INFORMATION].
+_logger.LogMetrics(new EventId(200), "throughput_rps={Rps}", rps);
 ```
 
 ### Example output
@@ -487,13 +490,13 @@ _logger.LogMetrics(new EventId(200, "Throughput"), "throughput_rps={Rps}", rps);
 
 The `[METRICS]` label is printed in **Magenta** in the console for easy visual distinction.
 
-### Direct log level access
+### Filtering
 
-If you need the raw `LogLevel` value (e.g. for filtering configuration):
+Tjidde.Logging's own `MinimumLevel` and `CategoryMinimumLevels` never drop metrics entries. Filters of `Microsoft.Extensions.Logging` itself (for example `Logging:LogLevel:Default` in `appsettings.json`) treat them as `Information`, so a category filtered to `Warning` or higher also filters its metrics entries.
 
-```csharp
-var metricsLevel = MetricsLoggerExtensions.Metrics; // (LogLevel)10
-```
+### The obsolete `Metrics` log level
+
+Earlier versions logged metrics at the custom level `MetricsLoggerExtensions.Metrics` (`(LogLevel)10`). That value is not a valid `LogLevel`: other providers reject it, and the Microsoft console formatters throw an `ArgumentOutOfRangeException`, so `LogMetrics` crashed as soon as `AddConsole()` was also registered. The field is now marked `[Obsolete]`. Tjidde.Logging still shows `(LogLevel)10` as `[METRICS]`, but use `LogMetrics(...)` (or `MetricsEventId`) instead.
 
 ---
 

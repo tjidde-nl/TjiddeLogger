@@ -154,6 +154,7 @@ YYYY-MM-DD: HH:mm:ss: [LEVEL] Class=>ClassName Method=>MethodName: Client=>Custo
 ```
 
 - `LEVEL` is one of: `TRACE`, `DEBUG`, `INFORMATION`, `WARNING`, `ERROR`, `CRITICAL`, `METRICS`
+- `METRICS` is shown for entries written with `_logger.LogMetrics(...)`. They are logged at `LogLevel.Information` with event `Metrics` (id 10000), so other providers such as `AddConsole()` see a normal information entry. For real application metrics, use `System.Diagnostics.Metrics`.
 - `Method=>` is included when set via `using (_logger.BeginMethodScope())` (or a scope with key `MethodName`)
 - `Client=>` is omitted when no customer context is active
 

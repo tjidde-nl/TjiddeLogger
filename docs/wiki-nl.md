@@ -11,7 +11,7 @@
 7. [Maskering van gevoelige gegevens](#maskering-van-gevoelige-gegevens)
 8. [Uitzonderingsopmaak](#uitzonderingsopmaak)
 9. [Scopes](#scopes)
-10. [Metrics logniveau](#metrics-logniveau)
+10. [Metrics-regels](#metrics-regels)
 11. [CI/CD (GitHub Actions)](#cicd-github-actions)
 12. [Toekomstige ontwikkelingen](#toekomstige-ontwikkelingen)
 
@@ -26,7 +26,7 @@
 - Compacte éénregelige uitzonderingsopmaak inclusief inner exceptions en stack traces.
 - Klantcontextpropagatie via `AsyncLocal` — veilig voor async/await en multi-tenant scenario's.
 - Scope-ondersteuning voor gestructureerde logging.
-- Aangepast `Metrics` logniveau voor het vastleggen van applicatiemetrics naast reguliere logberichten.
+- `LogMetrics` voor metric-achtige regels, weergegeven als `[METRICS]` naast reguliere logberichten.
 - Ondersteunt .NET 7, 8, 9 en 10.
 
 ---
@@ -131,7 +131,7 @@ YYYY-MM-DD: HH:mm:ss: [NIVEAU] CS=>KlasseNaam Method=>MethodeNaam: Client=>Klant
 | Warning | `[WARNING]` |
 | Error | `[ERROR]` |
 | Critical | `[CRITICAL]` |
-| Metrics *(aangepast)* | `[METRICS]` |
+| Metrics *(Information + event `Metrics`)* | `[METRICS]` |
 
 ### Consolekleuren
 
@@ -145,7 +145,7 @@ Elk logniveau wordt in een aparte consolekleur weergegeven voor snelle visuele h
 | Warning | Geel |
 | Error | Rood |
 | Critical | Donkerrood |
-| Metrics *(aangepast)* | Magenta |
+| Metrics *(Information + event `Metrics`)* | Magenta |
 
 ---
 
@@ -455,11 +455,13 @@ builder.Logging.AddTjiddeLogger(options =>
 
 ---
 
-## Metrics logniveau
+## Metrics-regels
 
-Tjidde.Logging biedt een aangepast `Metrics` logniveau voor het vastleggen van applicatiemetrics (tellers, tijdmetingen, meters) naast reguliere logberichten. Omdat `Microsoft.Extensions.Logging.LogLevel` een sealed enum is, is het Metrics-niveau geïmplementeerd als een sterk getypeerde constante met waarde `10`.
+Tjidde.Logging biedt `LogMetrics` voor het schrijven van metric-achtige regels (tellers, tijdmetingen, meters) naast reguliere logberichten. Een metrics-regel is een gewone `LogLevel.Information`-regel met het event-ID `MetricsLoggerExtensions.MetricsEventId` (`Id = 10000`, `Name = "Metrics"`). Tjidde.Logging herkent dat event en toont de regel als `[METRICS]`; andere providers (bijvoorbeeld `AddConsole()`) zien een gewone information-regel.
 
-### Het Metrics-niveau gebruiken
+> Gebruik voor echte applicatiemetrics (dashboards, alerting, aggregatie) [`System.Diagnostics.Metrics`](https://learn.microsoft.com/dotnet/core/diagnostics/metrics) met OpenTelemetry of `dotnet-counters`. `LogMetrics` is bedoeld voor metricwaarden die u ook in de log wilt zien.
+
+### LogMetrics gebruiken
 
 Voeg de using-directive toe en roep `LogMetrics` aan:
 
@@ -475,8 +477,9 @@ _logger.LogMetrics("response_time_ms={ResponseTime}", elapsed.TotalMilliseconds)
 // Met een uitzondering
 _logger.LogMetrics(ex, "payment_failures_total={Count}", failureCount);
 
-// Met een event-ID
-_logger.LogMetrics(new EventId(200, "Throughput"), "throughput_rps={Rps}", rps);
+// Met een event-ID: een event-ID zonder naam krijgt de naam "Metrics" en wordt als [METRICS] getoond;
+// een event-ID met een andere naam wordt ongewijzigd doorgegeven en als [INFORMATION] getoond.
+_logger.LogMetrics(new EventId(200), "throughput_rps={Rps}", rps);
 ```
 
 ### Voorbeelduitvoer
@@ -487,13 +490,13 @@ _logger.LogMetrics(new EventId(200, "Throughput"), "throughput_rps={Rps}", rps);
 
 Het label `[METRICS]` wordt in **Magenta** weergegeven in de console voor eenvoudige visuele herkenning.
 
-### Directe toegang tot het logniveau
+### Filteren
 
-Als u de ruwe `LogLevel`-waarde nodig hebt (bijv. voor filterconfiguratie):
+Het eigen `MinimumLevel` en `CategoryMinimumLevels` van Tjidde.Logging laten metrics-regels altijd door. Filters van `Microsoft.Extensions.Logging` zelf (bijvoorbeeld `Logging:LogLevel:Default` in `appsettings.json`) behandelen ze als `Information`; een categorie die op `Warning` of hoger staat, filtert dus ook haar metrics-regels.
 
-```csharp
-var metricsLevel = MetricsLoggerExtensions.Metrics; // (LogLevel)10
-```
+### Het verouderde `Metrics`-logniveau
+
+Eerdere versies logden metrics op het aangepaste niveau `MetricsLoggerExtensions.Metrics` (`(LogLevel)10`). Die waarde is geen geldig `LogLevel`: andere providers weigeren haar en de console-formatters van Microsoft gooien een `ArgumentOutOfRangeException`, waardoor `LogMetrics` crashte zodra ook `AddConsole()` geregistreerd was. Het veld is nu gemarkeerd als `[Obsolete]`. Tjidde.Logging toont `(LogLevel)10` nog steeds als `[METRICS]`, maar gebruik in plaats daarvan `LogMetrics(...)` (of `MetricsEventId`).
 
 ---
 

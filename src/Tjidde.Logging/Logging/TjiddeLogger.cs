@@ -1,4 +1,5 @@
 using Tjidde.Logging.Context;
+using Tjidde.Logging.Extensions;
 using Tjidde.Logging.Formatting;
 using Tjidde.Logging.Masking;
 using Tjidde.Logging.Options;
@@ -76,7 +77,9 @@ internal sealed class TjiddeLogger : ILogger
         Exception? exception,
         Func<TState, Exception?, string> formatter)
     {
-        if (!IsEnabled(logLevel))
+        // Metrics entries (LogMetrics) are never dropped by Tjidde's own minimum level, as before.
+        var isMetrics = MetricsLoggerExtensions.IsMetricsEntry(logLevel, eventId);
+        if (logLevel == LogLevel.None || (!isMetrics && !IsEnabled(logLevel)))
             return;
 
         var now = DateTime.Now;
@@ -112,11 +115,11 @@ internal sealed class TjiddeLogger : ILogger
 
         var rendered = _options.OutputFormat == TjiddeLogOutputFormat.Json
             ? BuildJsonLogLine(now, logLevel, eventId, methodName, customer, message, exception, scopes, maskedKeyNames, properties)
-            : BuildTextLogLine(now, logLevel, methodName, customer, message, exception, scopes, maskedKeyNames);
+            : BuildTextLogLine(now, logLevel, eventId, methodName, customer, message, exception, scopes, maskedKeyNames);
 
         ExportToOpenTelemetry(now, logLevel, eventId, methodName, customer, message, exception, scopes, maskedKeyNames, properties);
 
-        _processor.Enqueue(rendered, _options.OutputFormat == TjiddeLogOutputFormat.Text ? GetColor(logLevel) : null);
+        _processor.Enqueue(rendered, _options.OutputFormat == TjiddeLogOutputFormat.Text ? GetColor(logLevel, eventId) : null);
     }
 
     private string RenderMessage<TState>(
@@ -208,7 +211,7 @@ internal sealed class TjiddeLogger : ILogger
     {
         yield return new KeyValuePair<string, object?>("log.category", _categoryName);
         yield return new KeyValuePair<string, object?>("log.class", _className);
-        yield return new KeyValuePair<string, object?>("log.level", FormatLogLevel(logLevel));
+        yield return new KeyValuePair<string, object?>("log.level", FormatLogLevel(logLevel, eventId));
         yield return new KeyValuePair<string, object?>("log.message", message);
 
         if (eventId.Id != 0)
@@ -246,6 +249,7 @@ internal sealed class TjiddeLogger : ILogger
     private string BuildTextLogLine(
         DateTime timestamp,
         LogLevel logLevel,
+        EventId eventId,
         string? methodName,
         string? customer,
         string message,
@@ -254,7 +258,7 @@ internal sealed class TjiddeLogger : ILogger
         List<string> maskedKeyNames)
     {
         var sb = new System.Text.StringBuilder();
-        sb.Append(BuildLogLine(timestamp, logLevel, _className, methodName, customer, message));
+        sb.Append(BuildLogLine(timestamp, FormatLogLevel(logLevel, eventId), _className, methodName, customer, message));
 
         if (maskedKeyNames.Count > 0)
             sb.Append($" [Masked: {string.Join(", ", maskedKeyNames)}]");
@@ -284,7 +288,7 @@ internal sealed class TjiddeLogger : ILogger
         {
             ["@timestamp"] = timestamp.ToString("O"),
             ["message"] = message,
-            ["level"] = FormatLogLevel(logLevel),
+            ["level"] = FormatLogLevel(logLevel, eventId),
             ["category"] = _categoryName,
             ["class"] = _className,
             ["eventId"] = eventId.Id,
@@ -336,7 +340,7 @@ internal sealed class TjiddeLogger : ILogger
 
     private static string BuildLogLine(
         DateTime timestamp,
-        LogLevel logLevel,
+        string level,
         string className,
         string? methodName,
         string? customer,
@@ -344,22 +348,21 @@ internal sealed class TjiddeLogger : ILogger
     {
         var date = timestamp.ToString("yyyy-MM-dd");
         var time = timestamp.ToString("HH:mm:ss");
-        var level = FormatLogLevel(logLevel);
         var method = string.IsNullOrWhiteSpace(methodName) ? string.Empty : $" Method=>{methodName}";
         var customerPart = string.IsNullOrWhiteSpace(customer) ? string.Empty : $"Client=>{customer}: ";
 
         return $"{date}: {time}: [{level}] Class=>{className}{method}: {customerPart}{message}";
     }
 
-    private static string FormatLogLevel(LogLevel logLevel) => logLevel switch
+    private static string FormatLogLevel(LogLevel logLevel, EventId eventId) => logLevel switch
     {
+        _ when MetricsLoggerExtensions.IsMetricsEntry(logLevel, eventId) => "METRICS",
         LogLevel.Trace => "TRACE",
         LogLevel.Debug => "DEBUG",
         LogLevel.Information => "INFORMATION",
         LogLevel.Warning => "WARNING",
         LogLevel.Error => "ERROR",
         LogLevel.Critical => "CRITICAL",
-        _ when (int)logLevel == 10 => "METRICS",
         _ => "???"
     };
 
@@ -449,15 +452,15 @@ internal sealed class TjiddeLogger : ILogger
         return scopes;
     }
 
-    private static ConsoleColor GetColor(LogLevel logLevel) => logLevel switch
+    private static ConsoleColor GetColor(LogLevel logLevel, EventId eventId) => logLevel switch
     {
+        _ when MetricsLoggerExtensions.IsMetricsEntry(logLevel, eventId) => ConsoleColor.Magenta,
         LogLevel.Trace => ConsoleColor.Gray,
         LogLevel.Debug => ConsoleColor.Cyan,
         LogLevel.Information => ConsoleColor.Green,
         LogLevel.Warning => ConsoleColor.Yellow,
         LogLevel.Error => ConsoleColor.Red,
         LogLevel.Critical => ConsoleColor.DarkRed,
-        _ when (int)logLevel == 10 => ConsoleColor.Magenta,
         _ => ConsoleColor.White
     };
 

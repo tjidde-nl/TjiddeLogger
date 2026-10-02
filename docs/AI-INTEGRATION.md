@@ -184,7 +184,7 @@ builder.Services.AddSingleton<ICustomerContextAccessor, ClaimsCustomerContextAcc
 
    Do not enable `ResolveMethodNameFromStackTrace`: it walks the stack on every log call.
 
-5. **Use `LogMetrics` for metric-style entries.** They are written at the custom `METRICS` level, which minimum-level filters never drop.
+5. **Use `LogMetrics` for metric-style entries.** They are written at `LogLevel.Information` with event `Metrics` (id 10000) and shown as `METRICS`; Tjidde's own minimum level never drops them, and other providers such as `AddConsole()` see a normal information entry. Never log at `(LogLevel)10` / `MetricsLoggerExtensions.Metrics` (obsolete: other providers throw on it). For real metrics, use `System.Diagnostics.Metrics`.
 
    ```csharp
    _logger.LogMetrics("checkout_duration_ms={DurationMs}", elapsedMs);
@@ -233,7 +233,7 @@ Full shape, where segments without a value are left out:
 yyyy-MM-dd: HH:mm:ss: [LEVEL] Class=>ClassName Method=>MethodName: Client=>Customer: Message [Masked: Key1, Key2] | Exception: … | Scopes: a > b
 ```
 
-Levels: `TRACE`, `DEBUG`, `INFORMATION`, `WARNING`, `ERROR`, `CRITICAL`, `METRICS`. Timestamps are local time. Each level gets its own color unless the output is redirected.
+Levels: `TRACE`, `DEBUG`, `INFORMATION`, `WARNING`, `ERROR`, `CRITICAL`, `METRICS` (`METRICS` = an `Information` entry with event name `Metrics`). Timestamps are local time. Each level gets its own color unless the output is redirected.
 
 JSON (`OutputFormat: Json`), meant for log shippers such as Elasticsearch or Loki. Shown formatted here; the real output is one object per line, with standard JSON escaping (`+` can appear as `+`):
 
