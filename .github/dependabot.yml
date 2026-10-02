@@ -1,0 +1,41 @@
+version: 2
+
+updates:
+  - package-ecosystem: "nuget"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      microsoft-extensions:
+        patterns:
+          - "Microsoft.Extensions.*"
+      test-packages:
+        patterns:
+          - "xunit*"
+          - "Microsoft.NET.Test.Sdk"
+          - "FluentAssertions"
+    ignore:
+      # The library (and the test project) reference Microsoft.Extensions.* with one major per
+      # target framework on purpose: 7.0.x for net7.0, 8.0.x for net8.0, 9.0.x for net9.0 and
+      # 10.0.x for net10.0. A higher major does not support the older TFM (or would force
+      # consumers on that TFM onto a newer Microsoft.Extensions line), so only allow
+      # minor/patch updates within each major. Raise majors by hand when adding a new TFM.
+      - dependency-name: "Microsoft.Extensions.*"
+        update-types: ["version-update:semver-major"]
+      # net7.0 in the test project is pinned to the last releases that still support it:
+      # Microsoft.NET.Test.Sdk 17.13.0 (17.14+ requires net8.0) and xunit.runner.visualstudio
+      # 3.0.2 (3.1+ requires net8.0). The net8.0+ references are already on newer majors, so
+      # block the ranges that would break net7.0 and bump majors manually.
+      - dependency-name: "Microsoft.NET.Test.Sdk"
+        versions: [">= 17.14.0, < 18.0.0"]
+      - dependency-name: "Microsoft.NET.Test.Sdk"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "xunit.runner.visualstudio"
+        versions: [">= 3.1.0, < 4.0.0"]
+      - dependency-name: "xunit.runner.visualstudio"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
