@@ -6,6 +6,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Primitives;
 
 namespace Tjidde.Logging.Extensions;
 
@@ -36,6 +38,11 @@ public static class TjiddeLoggingBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(configurationSection);
+
+        // Rebind the options when the configuration reloads (for example appsettings.json with reloadOnChange),
+        // so the provider applies the new values to existing loggers.
+        builder.Services.AddSingleton<IOptionsChangeTokenSource<TjiddeLoggerOptions>>(
+            new ConfigurationSectionChangeTokenSource(configurationSection));
 
         return builder.AddTjiddeLogger(options => configurationSection.Bind(options));
     }
@@ -103,5 +110,17 @@ public static class TjiddeLoggingBuilderExtensions
         ArgumentNullException.ThrowIfNull(builder);
         builder.Services.Configure<TjiddeLoggerOptions>(options => options.OutputFormat = TjiddeLogOutputFormat.Text);
         return builder;
+    }
+
+    /// <summary>Signals an options change when the bound configuration section reloads.</summary>
+    private sealed class ConfigurationSectionChangeTokenSource : IOptionsChangeTokenSource<TjiddeLoggerOptions>
+    {
+        private readonly IConfiguration _configuration;
+
+        public ConfigurationSectionChangeTokenSource(IConfiguration configuration) => _configuration = configuration;
+
+        public string Name => Microsoft.Extensions.Options.Options.DefaultName;
+
+        public IChangeToken GetChangeToken() => _configuration.GetReloadToken();
     }
 }

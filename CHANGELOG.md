@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - `MetricsLoggerExtensions.MetricsEventId` (`Id = 10000`, `Name = "Metrics"`), plus the constants `MetricsEventName` and `MetricsEventIdValue`. Tjidde.Logging shows every entry with event name `Metrics` as `[METRICS]` in magenta.
 
 ### Changed
+- Options changes now apply to existing loggers immediately, without a restart: the provider listens to `IOptionsMonitor<TjiddeLoggerOptions>.OnChange`, and `AddTjiddeLogger(IConfiguration)` / `AddTjiddeLogger(IConfigurationSection)` rebind the options when the configuration reloads (for example `appsettings.json` with `reloadOnChange`). Options, masker, exception formatter and OpenTelemetry fallback `ActivitySource` are replaced together, so a log call never mixes old and new settings; the previous `ActivitySource` is disposed.
 - `LogMetrics` now logs at `LogLevel.Information` with `MetricsEventId` instead of the custom level `(LogLevel)10`. Tjidde.Logging still shows these entries as `[METRICS]` and its own minimum level never drops them; other providers see a normal information entry. `LogMetrics(EventId, ...)` keeps the caller's event ID and only adds the name `Metrics` when it has none.
 - JSON output: object cycles in logged values are written as `null` instead of failing, and object graphs deeper than 32 levels fall back to `ToString()`.
 

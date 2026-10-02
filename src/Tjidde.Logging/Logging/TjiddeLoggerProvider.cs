@@ -15,9 +15,11 @@ namespace Tjidde.Logging.Logging;
 [ProviderAlias("Tjidde")]
 public sealed class TjiddeLoggerProvider : ILoggerProvider, ISupportExternalScope
 {
-    private readonly IOptionsMonitor<TjiddeLoggerOptions> _optionsMonitor;
     private readonly ICustomerContextAccessor _customerContextAccessor;
     private readonly IMaskedKeysAccessor _maskedKeysAccessor;
+    private readonly TjiddeLoggerConfigurationHolder _configuration;
+    private readonly IDisposable? _optionsChangeRegistration;
+    private readonly object _sync = new();
     private readonly ConcurrentDictionary<string, TjiddeLogger> _loggers = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConsoleLogProcessor _processor = new();
     private IExternalScopeProvider _scopeProvider = NoopExternalScopeProvider.Instance;
@@ -31,9 +33,13 @@ public sealed class TjiddeLoggerProvider : ILoggerProvider, ISupportExternalScop
         ICustomerContextAccessor customerContextAccessor,
         IMaskedKeysAccessor maskedKeysAccessor)
     {
-        _optionsMonitor = optionsMonitor;
         _customerContextAccessor = customerContextAccessor;
         _maskedKeysAccessor = maskedKeysAccessor;
+        _configuration = new TjiddeLoggerConfigurationHolder(
+            TjiddeLoggerConfiguration.Create(optionsMonitor.CurrentValue, maskedKeysAccessor));
+
+        // Options changes (for example appsettings.json with reloadOnChange) apply to existing loggers immediately
+        _optionsChangeRegistration = optionsMonitor.OnChange(OnOptionsChanged);
     }
 
     /// <inheritdoc />
@@ -55,12 +61,18 @@ public sealed class TjiddeLoggerProvider : ILoggerProvider, ISupportExternalScop
     /// <inheritdoc />
     public void Dispose()
     {
-        if (!_disposed)
+        lock (_sync)
         {
-            _loggers.Clear();
-            _processor.Dispose();
+            if (_disposed)
+                return;
+
             _disposed = true;
         }
+
+        _optionsChangeRegistration?.Dispose();
+        _loggers.Clear();
+        _processor.Dispose();
+        _configuration.Current.Dispose();
     }
 
     /// <summary>A no-op scope provider used before an external one is assigned.</summary>
@@ -78,22 +90,37 @@ public sealed class TjiddeLoggerProvider : ILoggerProvider, ISupportExternalScop
     }
 
     private TjiddeLogger CreateLoggerInstance(string categoryName)
-    {
-        var options = _optionsMonitor.CurrentValue;
-        // Pass the accessor rather than its current keys, so keys added later reach this logger too
-        var masker = new SensitiveDataMasker(
-            options.MaskPlaceholder,
-            options.AdditionalSensitiveKeys,
-            _maskedKeysAccessor);
-        var exceptionFormatter = new ExceptionFormatter(options.IncludeStackTrace, options.IncludeInnerExceptions);
+        => new(categoryName, _configuration, _customerContextAccessor, _processor, _scopeProvider);
 
-        return new TjiddeLogger(
-            categoryName,
-            options,
-            _customerContextAccessor,
-            masker,
-            exceptionFormatter,
-            _processor,
-            _scopeProvider);
+    private void OnOptionsChanged(TjiddeLoggerOptions options, string? name)
+    {
+        // Only the default (unnamed) options configure this provider
+        if (!string.IsNullOrEmpty(name))
+            return;
+
+        TjiddeLoggerConfiguration updated;
+        try
+        {
+            updated = TjiddeLoggerConfiguration.Create(options, _maskedKeysAccessor);
+        }
+        catch (Exception)
+        {
+            // Keep logging with the previous configuration rather than fail the configuration reload.
+            return;
+        }
+
+        TjiddeLoggerConfiguration previous;
+        lock (_sync)
+        {
+            if (_disposed)
+            {
+                updated.Dispose();
+                return;
+            }
+
+            previous = _configuration.Exchange(updated);
+        }
+
+        previous.Dispose();
     }
 }

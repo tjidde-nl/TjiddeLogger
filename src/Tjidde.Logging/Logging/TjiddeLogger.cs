@@ -26,17 +26,34 @@ internal sealed class TjiddeLogger : ILogger
     };
 
     private readonly string _categoryName;
-    private readonly ActivitySource? _fallbackActivitySource;
-    private readonly TjiddeLoggerOptions _options;
+    private readonly TjiddeLoggerConfigurationHolder _configuration;
     private readonly ICustomerContextAccessor _customerContextAccessor;
-    private readonly ISensitiveDataMasker _masker;
-    private readonly IExceptionFormatter _exceptionFormatter;
     private readonly ConsoleLogProcessor _processor;
     private IExternalScopeProvider? _scopeProvider;
 
     // Extracted from category name for readable output
     private readonly string _className;
 
+    /// <summary>
+    /// Creates a logger that reads its settings from <paramref name="configuration"/> on every call,
+    /// so a configuration change applies to this logger immediately.
+    /// </summary>
+    public TjiddeLogger(
+        string categoryName,
+        TjiddeLoggerConfigurationHolder configuration,
+        ICustomerContextAccessor customerContextAccessor,
+        ConsoleLogProcessor processor,
+        IExternalScopeProvider? scopeProvider)
+    {
+        _categoryName = categoryName;
+        _configuration = configuration;
+        _customerContextAccessor = customerContextAccessor;
+        _processor = processor;
+        _scopeProvider = scopeProvider;
+        _className = ExtractClassName(categoryName);
+    }
+
+    /// <summary>Creates a logger with a fixed configuration.</summary>
     public TjiddeLogger(
         string categoryName,
         TjiddeLoggerOptions options,
@@ -45,18 +62,13 @@ internal sealed class TjiddeLogger : ILogger
         IExceptionFormatter exceptionFormatter,
         ConsoleLogProcessor processor,
         IExternalScopeProvider? scopeProvider)
+        : this(
+            categoryName,
+            new TjiddeLoggerConfigurationHolder(new TjiddeLoggerConfiguration(options, masker, exceptionFormatter)),
+            customerContextAccessor,
+            processor,
+            scopeProvider)
     {
-        _categoryName = categoryName;
-        _options = options;
-        _customerContextAccessor = customerContextAccessor;
-        _masker = masker;
-        _exceptionFormatter = exceptionFormatter;
-        _processor = processor;
-        _scopeProvider = scopeProvider;
-        _className = ExtractClassName(categoryName);
-        _fallbackActivitySource = string.IsNullOrWhiteSpace(_options.OpenTelemetryActivitySourceName)
-            ? null
-            : new ActivitySource(_options.OpenTelemetryActivitySourceName);
     }
 
     /// <summary>Updates the scope provider — called by the provider when the external scope provider is set.</summary>
@@ -66,14 +78,18 @@ internal sealed class TjiddeLogger : ILogger
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull
         => _scopeProvider?.Push(state);
 
-    public bool IsEnabled(LogLevel logLevel)
+    public bool IsEnabled(LogLevel logLevel) => IsEnabled(_configuration.Current, logLevel);
+
+    private bool IsEnabled(TjiddeLoggerConfiguration config, LogLevel logLevel)
     {
         if (logLevel == LogLevel.None)
             return false;
 
-        var minimumLevel = ResolveMinimumLevelForCategory();
-        return logLevel >= minimumLevel;
+        return logLevel >= GetMinimumLevel(config);
     }
+
+    private LogLevel GetMinimumLevel(TjiddeLoggerConfiguration config)
+        => config.ResolveMinimumLevel(_categoryName);
 
     public void Log<TState>(
         LogLevel logLevel,
@@ -82,9 +98,12 @@ internal sealed class TjiddeLogger : ILogger
         Exception? exception,
         Func<TState, Exception?, string> formatter)
     {
+        // One configuration for the whole call, so a concurrent options change never mixes old and new settings.
+        var config = _configuration.Current;
+
         // Metrics entries (LogMetrics) are never dropped by Tjidde's own minimum level, as before.
         var isMetrics = MetricsLoggerExtensions.IsMetricsEntry(logLevel, eventId);
-        if (logLevel == LogLevel.None || (!isMetrics && !IsEnabled(logLevel)))
+        if (logLevel == LogLevel.None || (!isMetrics && !IsEnabled(config, logLevel)))
             return;
 
         // Logging must never throw: any failure while building the entry produces a minimal line instead.
@@ -92,15 +111,16 @@ internal sealed class TjiddeLogger : ILogger
         string? message = null;
         try
         {
-            WriteEntry(now, logLevel, eventId, state, exception, formatter, ref message);
+            WriteEntry(config, now, logLevel, eventId, state, exception, formatter, ref message);
         }
         catch (Exception renderError)
         {
-            WriteFallbackEntry(now, logLevel, eventId, state, exception, formatter, message, renderError);
+            WriteFallbackEntry(config, now, logLevel, eventId, state, exception, formatter, message, renderError);
         }
     }
 
     private void WriteEntry<TState>(
+        TjiddeLoggerConfiguration config,
         DateTime now,
         LogLevel logLevel,
         EventId eventId,
@@ -110,7 +130,7 @@ internal sealed class TjiddeLogger : ILogger
         ref string? message)
     {
         var customer = _customerContextAccessor.GetCustomerContext();
-        var methodName = ResolveMethodName();
+        var methodName = ResolveMethodName(config);
 
         var maskedKeyNames = new List<string>();
         List<KeyValuePair<string, object?>>? properties = null;
@@ -129,23 +149,23 @@ internal sealed class TjiddeLogger : ILogger
                     continue;
                 }
 
-                properties.Add(new KeyValuePair<string, object?>(kvp.Key, SafeMaskPropertyValue(kvp.Key, kvp.Value, maskedKeyNames)));
+                properties.Add(new KeyValuePair<string, object?>(kvp.Key, SafeMaskPropertyValue(config, kvp.Key, kvp.Value, maskedKeyNames)));
             }
         }
 
-        message = RenderMessage(state, exception, formatter, originalFormat, properties, maskedKeyNames.Count > 0);
+        message = RenderMessage(config, state, exception, formatter, originalFormat, properties, maskedKeyNames.Count > 0);
 
         List<string>? scopes = null;
-        if (_options.IncludeScopes && _scopeProvider is not null)
-            scopes = CollectScopes();
+        if (config.Options.IncludeScopes && _scopeProvider is not null)
+            scopes = CollectScopes(config);
 
-        var rendered = _options.OutputFormat == TjiddeLogOutputFormat.Json
-            ? BuildJsonLogLine(now, logLevel, eventId, methodName, customer, message, exception, scopes, maskedKeyNames, properties)
-            : BuildTextLogLine(now, logLevel, eventId, methodName, customer, message, exception, scopes, maskedKeyNames);
+        var rendered = config.Options.OutputFormat == TjiddeLogOutputFormat.Json
+            ? BuildJsonLogLine(config, now, logLevel, eventId, methodName, customer, message, exception, scopes, maskedKeyNames, properties)
+            : BuildTextLogLine(config, now, logLevel, eventId, methodName, customer, message, exception, scopes, maskedKeyNames);
 
-        ExportToOpenTelemetry(now, logLevel, eventId, methodName, customer, message, exception, scopes, maskedKeyNames, properties);
+        ExportToOpenTelemetry(config, now, logLevel, eventId, methodName, customer, message, exception, scopes, maskedKeyNames, properties);
 
-        _processor.Enqueue(rendered, _options.OutputFormat == TjiddeLogOutputFormat.Text ? GetColor(logLevel, eventId) : null);
+        _processor.Enqueue(rendered, config.Options.OutputFormat == TjiddeLogOutputFormat.Text ? GetColor(logLevel, eventId) : null);
     }
 
     /// <summary>
@@ -153,6 +173,7 @@ internal sealed class TjiddeLogger : ILogger
     /// that rendering failed. Never throws.
     /// </summary>
     private void WriteFallbackEntry<TState>(
+        TjiddeLoggerConfiguration config,
         DateTime now,
         LogLevel logLevel,
         EventId eventId,
@@ -164,13 +185,13 @@ internal sealed class TjiddeLogger : ILogger
     {
         try
         {
-            message ??= FallbackMessage(state, exception, formatter) ?? "[message unavailable]";
+            message ??= FallbackMessage(config, state, exception, formatter) ?? "[message unavailable]";
             var level = FormatLogLevel(logLevel, eventId);
-            var failure = TryMask($"{renderError.GetType().Name}: {SafeExceptionMessage(renderError)}")
+            var failure = TryMask(config, $"{renderError.GetType().Name}: {SafeExceptionMessage(renderError)}")
                           ?? renderError.GetType().Name;
 
             string line;
-            if (_options.OutputFormat == TjiddeLogOutputFormat.Json)
+            if (config.Options.OutputFormat == TjiddeLogOutputFormat.Json)
             {
                 line = JsonSerializer.Serialize(new Dictionary<string, string?>
                 {
@@ -187,7 +208,7 @@ internal sealed class TjiddeLogger : ILogger
                        $"[Log entry could not be rendered completely: {failure}] | Category: {_categoryName}";
             }
 
-            _processor.Enqueue(line, _options.OutputFormat == TjiddeLogOutputFormat.Text ? GetColor(logLevel, eventId) : null);
+            _processor.Enqueue(line, config.Options.OutputFormat == TjiddeLogOutputFormat.Text ? GetColor(logLevel, eventId) : null);
         }
         catch (Exception)
         {
@@ -200,16 +221,16 @@ internal sealed class TjiddeLogger : ILogger
     /// structured state yields its unrendered template, because the framework's formatter inserts raw
     /// (unmasked) values of sensitive properties.
     /// </summary>
-    private string? FallbackMessage<TState>(TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+    private string? FallbackMessage<TState>(TjiddeLoggerConfiguration config, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
     {
-        if (_options.EnableSensitiveDataMasking && state is IEnumerable<KeyValuePair<string, object?>> structuredState)
+        if (config.Options.EnableSensitiveDataMasking && state is IEnumerable<KeyValuePair<string, object?>> structuredState)
         {
             try
             {
                 foreach (var kvp in structuredState)
                 {
                     if (kvp.Key.Equals("{OriginalFormat}", StringComparison.Ordinal))
-                        return TryMask(kvp.Value as string);
+                        return TryMask(config, kvp.Value as string);
                 }
             }
             catch (Exception)
@@ -220,7 +241,7 @@ internal sealed class TjiddeLogger : ILogger
             return null;
         }
 
-        return TryMask(TryFormat(state, exception, formatter));
+        return TryMask(config, TryFormat(state, exception, formatter));
     }
 
     private static string? TryFormat<TState>(TState state, Exception? exception, Func<TState, Exception?, string> formatter)
@@ -235,14 +256,14 @@ internal sealed class TjiddeLogger : ILogger
         }
     }
 
-    private string? TryMask(string? text)
+    private string? TryMask(TjiddeLoggerConfiguration config, string? text)
     {
-        if (text is null || !_options.EnableSensitiveDataMasking)
+        if (text is null || !config.Options.EnableSensitiveDataMasking)
             return text;
 
         try
         {
-            return _masker.MaskMessage(text);
+            return config.Masker.MaskMessage(text);
         }
         catch (Exception)
         {
@@ -281,6 +302,7 @@ internal sealed class TjiddeLogger : ILogger
     private static string Unserializable(object value) => $"[unserializable: {value.GetType().FullName}]";
 
     private string RenderMessage<TState>(
+        TjiddeLoggerConfiguration config,
         TState state,
         Exception? exception,
         Func<TState, Exception?, string> formatter,
@@ -291,7 +313,7 @@ internal sealed class TjiddeLogger : ILogger
         string message;
         try
         {
-            if (!_options.EnableSensitiveDataMasking)
+            if (!config.Options.EnableSensitiveDataMasking)
                 return formatter(state, exception);
 
             // The framework's formatter inserts the raw values of sensitive properties into the message,
@@ -309,14 +331,14 @@ internal sealed class TjiddeLogger : ILogger
             message = $"{originalFormat ?? "[message unavailable]"} [message could not be rendered: {renderError.GetType().Name}]";
         }
 
-        return _options.EnableSensitiveDataMasking ? _masker.MaskMessage(message) : message;
+        return config.Options.EnableSensitiveDataMasking ? config.Masker.MaskMessage(message) : message;
     }
 
-    private object? SafeMaskPropertyValue(string key, object? value, List<string> maskedKeyNames)
+    private object? SafeMaskPropertyValue(TjiddeLoggerConfiguration config, string key, object? value, List<string> maskedKeyNames)
     {
         try
         {
-            return MaskPropertyValue(key, value, maskedKeyNames);
+            return MaskPropertyValue(config, key, value, maskedKeyNames);
         }
         catch (Exception)
         {
@@ -325,27 +347,27 @@ internal sealed class TjiddeLogger : ILogger
         }
     }
 
-    private object? MaskPropertyValue(string key, object? value, List<string> maskedKeyNames)
+    private object? MaskPropertyValue(TjiddeLoggerConfiguration config, string key, object? value, List<string> maskedKeyNames)
     {
-        if (!_options.EnableSensitiveDataMasking)
+        if (!config.Options.EnableSensitiveDataMasking)
             return value;
 
-        if (_masker.IsSensitiveKey(key))
+        if (config.Masker.IsSensitiveKey(key))
         {
             maskedKeyNames.Add(key);
-            return _masker.MaskValue(key, value?.ToString() ?? string.Empty);
+            return config.Masker.MaskValue(key, value?.ToString() ?? string.Empty);
         }
 
         // Non-sensitive keys can still carry sensitive literals (e.g. "password=..." or dynamic keys).
-        return value is string text ? _masker.MaskMessage(text) : value;
+        return value is string text ? config.Masker.MaskMessage(text) : value;
     }
 
-    private string FormatException(Exception exception)
+    private string FormatException(TjiddeLoggerConfiguration config, Exception exception)
     {
         string formatted;
         try
         {
-            formatted = _exceptionFormatter.Format(exception);
+            formatted = config.ExceptionFormatter.Format(exception);
         }
         catch (Exception formatterError)
         {
@@ -354,10 +376,11 @@ internal sealed class TjiddeLogger : ILogger
                         $"[exception formatter failed: {formatterError.GetType().Name}]";
         }
 
-        return _options.EnableSensitiveDataMasking ? _masker.MaskMessage(formatted) : formatted;
+        return config.Options.EnableSensitiveDataMasking ? config.Masker.MaskMessage(formatted) : formatted;
     }
 
     private void ExportToOpenTelemetry(
+        TjiddeLoggerConfiguration config,
         DateTime timestamp,
         LogLevel logLevel,
         EventId eventId,
@@ -369,12 +392,12 @@ internal sealed class TjiddeLogger : ILogger
         List<string> maskedKeyNames,
         List<KeyValuePair<string, object?>>? properties)
     {
-        if (!_options.EnableOpenTelemetryExport)
+        if (!config.Options.EnableOpenTelemetryExport)
             return;
 
         try
         {
-            var tags = BuildOpenTelemetryTags(logLevel, eventId, methodName, customer, message, exception, scopes, maskedKeyNames, properties);
+            var tags = BuildOpenTelemetryTags(config, logLevel, eventId, methodName, customer, message, exception, scopes, maskedKeyNames, properties);
             var activityEvent = new ActivityEvent("log", timestamp, new ActivityTagsCollection(tags));
 
             var currentActivity = Activity.Current;
@@ -384,10 +407,10 @@ internal sealed class TjiddeLogger : ILogger
                 return;
             }
 
-            if (!_options.OpenTelemetryCreateFallbackActivity || _fallbackActivitySource is null)
+            if (!config.Options.OpenTelemetryCreateFallbackActivity || config.FallbackActivitySource is null)
                 return;
 
-            using var fallbackActivity = _fallbackActivitySource.StartActivity("tjidde.log", ActivityKind.Internal);
+            using var fallbackActivity = config.FallbackActivitySource.StartActivity("tjidde.log", ActivityKind.Internal);
             fallbackActivity?.AddEvent(activityEvent);
         }
         catch (Exception)
@@ -397,6 +420,7 @@ internal sealed class TjiddeLogger : ILogger
     }
 
     private IEnumerable<KeyValuePair<string, object?>> BuildOpenTelemetryTags(
+        TjiddeLoggerConfiguration config,
         LogLevel logLevel,
         EventId eventId,
         string? methodName,
@@ -428,8 +452,8 @@ internal sealed class TjiddeLogger : ILogger
         {
             yield return new KeyValuePair<string, object?>("exception.type", exception.GetType().FullName);
             var exceptionMessage = SafeExceptionMessage(exception);
-            yield return new KeyValuePair<string, object?>("exception.message", _options.EnableSensitiveDataMasking ? _masker.MaskMessage(exceptionMessage) : exceptionMessage);
-            yield return new KeyValuePair<string, object?>("exception.stacktrace", FormatException(exception));
+            yield return new KeyValuePair<string, object?>("exception.message", config.Options.EnableSensitiveDataMasking ? config.Masker.MaskMessage(exceptionMessage) : exceptionMessage);
+            yield return new KeyValuePair<string, object?>("exception.stacktrace", FormatException(config, exception));
         }
 
         if (scopes is { Count: > 0 })
@@ -446,6 +470,7 @@ internal sealed class TjiddeLogger : ILogger
     }
 
     private string BuildTextLogLine(
+        TjiddeLoggerConfiguration config,
         DateTime timestamp,
         LogLevel logLevel,
         EventId eventId,
@@ -463,7 +488,7 @@ internal sealed class TjiddeLogger : ILogger
             sb.Append($" [Masked: {string.Join(", ", maskedKeyNames)}]");
 
         if (exception is not null)
-            sb.Append($" | Exception: {FormatException(exception)}");
+            sb.Append($" | Exception: {FormatException(config, exception)}");
 
         if (scopes is { Count: > 0 })
             sb.Append($" | Scopes: {string.Join(" > ", scopes)}");
@@ -472,6 +497,7 @@ internal sealed class TjiddeLogger : ILogger
     }
 
     private string BuildJsonLogLine(
+        TjiddeLoggerConfiguration config,
         DateTime timestamp,
         LogLevel logLevel,
         EventId eventId,
@@ -496,14 +522,14 @@ internal sealed class TjiddeLogger : ILogger
             ["method"] = methodName,
             ["scopes"] = scopes is { Count: > 0 } ? scopes : null,
             ["maskedFields"] = maskedKeyNames.Count > 0 ? maskedKeyNames : null,
-            ["exception"] = exception is null ? null : FormatException(exception)
+            ["exception"] = exception is null ? null : FormatException(config, exception)
         };
 
         if (properties is { Count: > 0 })
         {
             var propertyMap = new Dictionary<string, object?>();
             foreach (var kvp in properties)
-                propertyMap[kvp.Key] = ToSerializableValue(kvp.Value);
+                propertyMap[kvp.Key] = ToSerializableValue(config, kvp.Value);
             payload["properties"] = propertyMap;
         }
 
@@ -515,7 +541,7 @@ internal sealed class TjiddeLogger : ILogger
     /// throwing getter, too deep) only affects itself: it falls back to <c>ToString()</c>, or to
     /// <c>[unserializable: TypeName]</c> when that throws too.
     /// </summary>
-    private object? ToSerializableValue(object? value)
+    private object? ToSerializableValue(TjiddeLoggerConfiguration config, object? value)
     {
         if (value is null)
             return null;
@@ -527,35 +553,8 @@ internal sealed class TjiddeLogger : ILogger
         catch (Exception)
         {
             var text = SafeToString(value);
-            return _options.EnableSensitiveDataMasking && text is not null ? _masker.MaskMessage(text) : text;
+            return config.Options.EnableSensitiveDataMasking && text is not null ? config.Masker.MaskMessage(text) : text;
         }
-    }
-
-    private LogLevel ResolveMinimumLevelForCategory()
-    {
-        var levels = _options.CategoryMinimumLevels;
-        if (levels.Count == 0)
-            return _options.MinimumLevel;
-
-        if (levels.TryGetValue(_categoryName, out var exact))
-            return exact;
-
-        var current = _categoryName;
-        while (true)
-        {
-            var lastDot = current.LastIndexOf('.');
-            if (lastDot <= 0)
-                break;
-
-            current = current[..lastDot];
-            if (levels.TryGetValue(current, out var matched))
-                return matched;
-        }
-
-        if (levels.TryGetValue("Default", out var fallback))
-            return fallback;
-
-        return _options.MinimumLevel;
     }
 
     private static string BuildLogLine(
@@ -586,13 +585,13 @@ internal sealed class TjiddeLogger : ILogger
         _ => "???"
     };
 
-    private string? ResolveMethodName()
-        => ExtractMethodFromScope()
-           ?? (_options.ResolveMethodNameFromStackTrace ? ExtractMethodFromStack() : null);
+    private string? ResolveMethodName(TjiddeLoggerConfiguration config)
+        => ExtractMethodFromScope(config)
+           ?? (config.Options.ResolveMethodNameFromStackTrace ? ExtractMethodFromStack() : null);
 
-    private string? ExtractMethodFromScope()
+    private string? ExtractMethodFromScope(TjiddeLoggerConfiguration config)
     {
-        if (!_options.IncludeScopes || _scopeProvider is null)
+        if (!config.Options.IncludeScopes || _scopeProvider is null)
             return null;
 
         string? methodName = null;
@@ -640,19 +639,19 @@ internal sealed class TjiddeLogger : ILogger
         return null;
     }
 
-    private string FormatScopeProperty(string key, object? value)
+    private string FormatScopeProperty(TjiddeLoggerConfiguration config, string key, object? value)
     {
         var raw = SafeToString(value) ?? string.Empty;
-        if (!_options.EnableSensitiveDataMasking)
+        if (!config.Options.EnableSensitiveDataMasking)
             return $"{key}={raw}";
 
-        var text = _masker.IsSensitiveKey(key)
-            ? _masker.MaskValue(key, raw)
-            : _masker.MaskMessage(raw);
+        var text = config.Masker.IsSensitiveKey(key)
+            ? config.Masker.MaskValue(key, raw)
+            : config.Masker.MaskMessage(raw);
         return $"{key}={text}";
     }
 
-    private List<string> CollectScopes()
+    private List<string> CollectScopes(TjiddeLoggerConfiguration config)
     {
         var scopes = new List<string>();
         _scopeProvider?.ForEachScope((scope, list) =>
@@ -662,11 +661,11 @@ internal sealed class TjiddeLogger : ILogger
                 switch (scope)
                 {
                     case string s when !string.IsNullOrWhiteSpace(s):
-                        list.Add(_options.EnableSensitiveDataMasking ? _masker.MaskMessage(s) : s);
+                        list.Add(config.Options.EnableSensitiveDataMasking ? config.Masker.MaskMessage(s) : s);
                         break;
                     case IEnumerable<KeyValuePair<string, object?>> kvps:
                     {
-                        list.AddRange(from kvp in kvps where !kvp.Key.Equals("MethodName", StringComparison.OrdinalIgnoreCase) select FormatScopeProperty(kvp.Key, kvp.Value));
+                        list.AddRange(from kvp in kvps where !kvp.Key.Equals("MethodName", StringComparison.OrdinalIgnoreCase) select FormatScopeProperty(config, kvp.Key, kvp.Value));
 
                         break;
                     }
