@@ -17,6 +17,7 @@
     <Description>Standardized, structured logging for .NET applications. Integrates with Microsoft.Extensions.Logging and provides consistent output, customer context, sensitive data masking, and improved exception formatting.</Description>
     <PackageTags>logging;tjidde;structured-logging;microsoft-extensions-logging</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/tjidde-nl/TjiddeLogger</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
@@ -64,6 +65,7 @@
     <None Include="..\..\NOTICE" Pack="true" PackagePath="\" />
     <None Include="..\..\CHANGELOG.md" Pack="true" PackagePath="\" />
     <None Include="..\..\docs\AI-INTEGRATION.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\assets\icon.png" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>
