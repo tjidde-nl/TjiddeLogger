@@ -31,6 +31,10 @@ internal sealed class TjiddeLogger : ILogger
     private readonly ConsoleLogProcessor _processor;
     private IExternalScopeProvider? _scopeProvider;
 
+    // Minimum level resolved for this category, together with the configuration it was resolved from.
+    // Replaced (not mutated) when the configuration changes, so readers always see a matching pair.
+    private MinimumLevelCache? _minimumLevel;
+
     // Extracted from category name for readable output
     private readonly string _className;
 
@@ -71,6 +75,9 @@ internal sealed class TjiddeLogger : ILogger
     {
     }
 
+    /// <summary>The configuration this logger currently uses.</summary>
+    internal TjiddeLoggerConfiguration Configuration => _configuration.Current;
+
     /// <summary>Updates the scope provider — called by the provider when the external scope provider is set.</summary>
     internal void SetScopeProvider(IExternalScopeProvider scopeProvider)
         => _scopeProvider = scopeProvider;
@@ -89,7 +96,28 @@ internal sealed class TjiddeLogger : ILogger
     }
 
     private LogLevel GetMinimumLevel(TjiddeLoggerConfiguration config)
-        => config.ResolveMinimumLevel(_categoryName);
+    {
+        var cached = Volatile.Read(ref _minimumLevel);
+        if (cached is not null && ReferenceEquals(cached.Configuration, config))
+            return cached.Level;
+
+        // First call, or the configuration changed: resolve once and reuse until the next change.
+        var level = config.ResolveMinimumLevel(_categoryName);
+        Volatile.Write(ref _minimumLevel, new MinimumLevelCache(config, level));
+        return level;
+    }
+
+    private sealed class MinimumLevelCache
+    {
+        public MinimumLevelCache(TjiddeLoggerConfiguration configuration, LogLevel level)
+        {
+            Configuration = configuration;
+            Level = level;
+        }
+
+        public TjiddeLoggerConfiguration Configuration { get; }
+        public LogLevel Level { get; }
+    }
 
     public void Log<TState>(
         LogLevel logLevel,
