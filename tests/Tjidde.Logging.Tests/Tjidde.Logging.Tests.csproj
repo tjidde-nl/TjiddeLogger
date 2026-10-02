@@ -39,29 +39,29 @@
   <!-- Microsoft.Extensions.* versions match the library's per-TFM versions (see src/Tjidde.Logging/Tjidde.Logging.csproj) -->
   <!-- Microsoft.Extensions.TimeProvider.Testing (FakeTimeProvider): 8.x is the last line that supports net7.0 -->
   <ItemGroup Condition="'$(TargetFramework)' == 'net7.0'">
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="7.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="7.0.0" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="7.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration" Version="7.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="7.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.20" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.0.20" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.20" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="9.0.20" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.20" />
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="8.10.0" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.20" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.0.20" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.20" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="9.0.20" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.20" />
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="8.10.0" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net9.0'">
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.14" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.0.14" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.14" />
-    <PackageReference Include="Microsoft.Extensions.Configuration" Version="9.0.14" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.14" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.20" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.0.20" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.20" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="9.0.20" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.20" />
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="9.10.0" />
   </ItemGroup>
 
