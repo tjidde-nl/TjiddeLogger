@@ -24,9 +24,31 @@
     <PackageProjectUrl>https://github.com/tjidde-nl/TjiddeLogger</PackageProjectUrl>
     <Copyright>Copyright © 2026 Tjidde Nieuwenhuizen</Copyright>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
-    <!-- Shown on the "Release Notes" tab on nuget.org -->
-    <PackageReleaseNotes>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\..\CHANGELOG.md'))</PackageReleaseNotes>
+    <!-- PackageReleaseNotes (the "Release Notes" tab on nuget.org) is set by the
+         SetReleaseNotesFromChangelog target below. -->
   </PropertyGroup>
+
+  <!--
+    Release notes for this version only: the "## [<PackageVersion>]" section of CHANGELOG.md
+    (up to the next "## [" heading), followed by a link to the full changelog.
+    If the section does not exist, the notes contain only the link; the build never fails on it.
+    Runs during pack, after -p:Version=... has been applied.
+  -->
+  <Target Name="SetReleaseNotesFromChangelog" BeforeTargets="GenerateNuspec">
+    <PropertyGroup>
+      <_ChangelogPath>$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', '..', '..', 'CHANGELOG.md'))</_ChangelogPath>
+      <_ChangelogUrl>https://github.com/tjidde-nl/TjiddeLogger/blob/main/CHANGELOG.md</_ChangelogUrl>
+      <_ChangelogText></_ChangelogText>
+      <_ChangelogText Condition="Exists('$(_ChangelogPath)')">$([System.IO.File]::ReadAllText('$(_ChangelogPath)'))</_ChangelogText>
+      <_ChangelogText>$(_ChangelogText.Replace('&#13;', ''))</_ChangelogText>
+      <_ChangelogVersionPattern>(?m)^## \[$([System.Text.RegularExpressions.Regex]::Escape('$(PackageVersion)'))\][^\n]*\n(?:(?!## \[).*\n?)*</_ChangelogVersionPattern>
+      <_ChangelogSection>$([System.Text.RegularExpressions.Regex]::Match('$(_ChangelogText)', '$(_ChangelogVersionPattern)').Value.Trim())</_ChangelogSection>
+      <PackageReleaseNotes>Full changelog: $(_ChangelogUrl)</PackageReleaseNotes>
+      <PackageReleaseNotes Condition="'$(_ChangelogSection)' != ''">$(_ChangelogSection)
+
+Full changelog: $(_ChangelogUrl)</PackageReleaseNotes>
+    </PropertyGroup>
+  </Target>
 
   <!-- Use framework-appropriate package versions to avoid unsupported TFM warnings -->
   <ItemGroup Condition="'$(TargetFramework)' == 'net7.0'">
