@@ -85,11 +85,23 @@ internal static class MessageTemplateRenderer
     }
 
     // Mirrors Microsoft.Extensions.Logging: null becomes "(null)" and collections are joined with ", ".
-    private static object FormatValue(object? value) => value switch
+    // A value whose enumeration or ToString() throws becomes "[unserializable: TypeName]" instead of failing.
+    private static object FormatValue(object? value)
     {
-        null => NullValue,
-        string text => text,
-        IEnumerable items => string.Join(", ", items.Cast<object?>().Select(item => item ?? NullValue)),
-        _ => value
-    };
+        try
+        {
+            return value switch
+            {
+                null => NullValue,
+                string text => text,
+                IEnumerable items => string.Join(", ", items.Cast<object?>().Select(item => item ?? NullValue)),
+                IFormattable => value,
+                _ => value.ToString() ?? string.Empty
+            };
+        }
+        catch (Exception)
+        {
+            return $"[unserializable: {value!.GetType().FullName}]";
+        }
+    }
 }

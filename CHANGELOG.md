@@ -10,9 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Changed
 - `LogMetrics` now logs at `LogLevel.Information` with `MetricsEventId` instead of the custom level `(LogLevel)10`. Tjidde.Logging still shows these entries as `[METRICS]` and its own minimum level never drops them; other providers see a normal information entry. `LogMetrics(EventId, ...)` keeps the caller's event ID and only adds the name `Metrics` when it has none.
+- JSON output: object cycles in logged values are written as `null` instead of failing, and object graphs deeper than 32 levels fall back to `ToString()`.
 
 ### Fixed
 - `LogMetrics` threw an `ArgumentOutOfRangeException` when another provider, such as the Microsoft console logger (`AddConsole()`), was also registered.
+- Logging no longer throws. A property value that cannot be serialized (unsupported type, throwing getter) falls back to its `ToString()`, or to `[unserializable: TypeName]` when that throws too; a value whose `ToString()` or enumeration throws no longer breaks the message (the template is used instead); a failing custom `IExceptionFormatter` falls back to exception type and message; scopes that throw are skipped; OpenTelemetry export failures are ignored. Any other failure while building the entry writes a minimal line with level, category, message and a note that rendering failed.
 
 ### Deprecated
 - `MetricsLoggerExtensions.Metrics` (`(LogLevel)10`): not a valid `LogLevel`, and other providers throw on it. Use `LogMetrics(...)`, or `System.Diagnostics.Metrics` for real application metrics. Tjidde.Logging still recognizes the value.

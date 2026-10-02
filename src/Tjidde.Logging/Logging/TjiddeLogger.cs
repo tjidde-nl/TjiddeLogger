@@ -6,6 +6,7 @@ using Tjidde.Logging.Options;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Tjidde.Logging.Logging;
 
@@ -17,7 +18,11 @@ internal sealed class TjiddeLogger : ILogger
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        // Logged objects can reference each other; write null for a cycle instead of throwing.
+        ReferenceHandler = ReferenceHandler.IgnoreCycles,
+        // Very deep object graphs fall back to ToString() instead of producing huge lines.
+        MaxDepth = 32
     };
 
     private readonly string _categoryName;
@@ -82,7 +87,28 @@ internal sealed class TjiddeLogger : ILogger
         if (logLevel == LogLevel.None || (!isMetrics && !IsEnabled(logLevel)))
             return;
 
+        // Logging must never throw: any failure while building the entry produces a minimal line instead.
         var now = DateTime.Now;
+        string? message = null;
+        try
+        {
+            WriteEntry(now, logLevel, eventId, state, exception, formatter, ref message);
+        }
+        catch (Exception renderError)
+        {
+            WriteFallbackEntry(now, logLevel, eventId, state, exception, formatter, message, renderError);
+        }
+    }
+
+    private void WriteEntry<TState>(
+        DateTime now,
+        LogLevel logLevel,
+        EventId eventId,
+        TState state,
+        Exception? exception,
+        Func<TState, Exception?, string> formatter,
+        ref string? message)
+    {
         var customer = _customerContextAccessor.GetCustomerContext();
         var methodName = ResolveMethodName();
 
@@ -103,11 +129,11 @@ internal sealed class TjiddeLogger : ILogger
                     continue;
                 }
 
-                properties.Add(new KeyValuePair<string, object?>(kvp.Key, MaskPropertyValue(kvp.Key, kvp.Value, maskedKeyNames)));
+                properties.Add(new KeyValuePair<string, object?>(kvp.Key, SafeMaskPropertyValue(kvp.Key, kvp.Value, maskedKeyNames)));
             }
         }
 
-        var message = RenderMessage(state, exception, formatter, originalFormat, properties, maskedKeyNames.Count > 0);
+        message = RenderMessage(state, exception, formatter, originalFormat, properties, maskedKeyNames.Count > 0);
 
         List<string>? scopes = null;
         if (_options.IncludeScopes && _scopeProvider is not null)
@@ -122,6 +148,138 @@ internal sealed class TjiddeLogger : ILogger
         _processor.Enqueue(rendered, _options.OutputFormat == TjiddeLogOutputFormat.Text ? GetColor(logLevel, eventId) : null);
     }
 
+    /// <summary>
+    /// Last-resort output when building the regular entry failed: level, category, message and a note
+    /// that rendering failed. Never throws.
+    /// </summary>
+    private void WriteFallbackEntry<TState>(
+        DateTime now,
+        LogLevel logLevel,
+        EventId eventId,
+        TState state,
+        Exception? exception,
+        Func<TState, Exception?, string> formatter,
+        string? message,
+        Exception renderError)
+    {
+        try
+        {
+            message ??= FallbackMessage(state, exception, formatter) ?? "[message unavailable]";
+            var level = FormatLogLevel(logLevel, eventId);
+            var failure = TryMask($"{renderError.GetType().Name}: {SafeExceptionMessage(renderError)}")
+                          ?? renderError.GetType().Name;
+
+            string line;
+            if (_options.OutputFormat == TjiddeLogOutputFormat.Json)
+            {
+                line = JsonSerializer.Serialize(new Dictionary<string, string?>
+                {
+                    ["@timestamp"] = now.ToString("O"),
+                    ["message"] = message,
+                    ["level"] = level,
+                    ["category"] = _categoryName,
+                    ["renderError"] = $"Log entry could not be rendered completely: {failure}"
+                });
+            }
+            else
+            {
+                line = $"{now:yyyy-MM-dd}: {now:HH:mm:ss}: [{level}] Class=>{_className}: {message} " +
+                       $"[Log entry could not be rendered completely: {failure}] | Category: {_categoryName}";
+            }
+
+            _processor.Enqueue(line, _options.OutputFormat == TjiddeLogOutputFormat.Text ? GetColor(logLevel, eventId) : null);
+        }
+        catch (Exception)
+        {
+            // Logging must never crash the application.
+        }
+    }
+
+    /// <summary>
+    /// The message for the last-resort entry when the regular message was never rendered. With masking enabled,
+    /// structured state yields its unrendered template, because the framework's formatter inserts raw
+    /// (unmasked) values of sensitive properties.
+    /// </summary>
+    private string? FallbackMessage<TState>(TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+    {
+        if (_options.EnableSensitiveDataMasking && state is IEnumerable<KeyValuePair<string, object?>> structuredState)
+        {
+            try
+            {
+                foreach (var kvp in structuredState)
+                {
+                    if (kvp.Key.Equals("{OriginalFormat}", StringComparison.Ordinal))
+                        return TryMask(kvp.Value as string);
+                }
+            }
+            catch (Exception)
+            {
+                // Fall through.
+            }
+
+            return null;
+        }
+
+        return TryMask(TryFormat(state, exception, formatter));
+    }
+
+    private static string? TryFormat<TState>(TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+    {
+        try
+        {
+            return formatter(state, exception);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private string? TryMask(string? text)
+    {
+        if (text is null || !_options.EnableSensitiveDataMasking)
+            return text;
+
+        try
+        {
+            return _masker.MaskMessage(text);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static string SafeExceptionMessage(Exception exception)
+    {
+        try
+        {
+            return exception.Message;
+        }
+        catch (Exception)
+        {
+            return "[message unavailable]";
+        }
+    }
+
+    /// <summary>Returns <c>value.ToString()</c>, or <c>[unserializable: TypeName]</c> when ToString throws.</summary>
+    internal static string? SafeToString(object? value)
+    {
+        if (value is null)
+            return null;
+
+        try
+        {
+            return value.ToString();
+        }
+        catch (Exception)
+        {
+            return Unserializable(value);
+        }
+    }
+
+    private static string Unserializable(object value) => $"[unserializable: {value.GetType().FullName}]";
+
     private string RenderMessage<TState>(
         TState state,
         Exception? exception,
@@ -130,19 +288,41 @@ internal sealed class TjiddeLogger : ILogger
         List<KeyValuePair<string, object?>>? properties,
         bool hasMaskedProperties)
     {
-        if (!_options.EnableSensitiveDataMasking)
-            return formatter(state, exception);
+        string message;
+        try
+        {
+            if (!_options.EnableSensitiveDataMasking)
+                return formatter(state, exception);
 
-        // The framework's formatter inserts the raw values of sensitive properties into the message,
-        // so rebuild the message from its template using the masked values instead.
-        var message = hasMaskedProperties
+            // The framework's formatter inserts the raw values of sensitive properties into the message,
+            // so rebuild the message from its template using the masked values instead.
+            message = hasMaskedProperties
                       && originalFormat is not null
                       && properties is not null
                       && MessageTemplateRenderer.TryRender(originalFormat, properties, out var rendered)
-            ? rendered
-            : formatter(state, exception);
+                ? rendered
+                : formatter(state, exception);
+        }
+        catch (Exception renderError)
+        {
+            // A value whose ToString() or enumeration throws must not lose the entry: fall back to the template.
+            message = $"{originalFormat ?? "[message unavailable]"} [message could not be rendered: {renderError.GetType().Name}]";
+        }
 
-        return _masker.MaskMessage(message);
+        return _options.EnableSensitiveDataMasking ? _masker.MaskMessage(message) : message;
+    }
+
+    private object? SafeMaskPropertyValue(string key, object? value, List<string> maskedKeyNames)
+    {
+        try
+        {
+            return MaskPropertyValue(key, value, maskedKeyNames);
+        }
+        catch (Exception)
+        {
+            // Only reachable for sensitive keys (ToString threw); never fall back to the raw value there.
+            return value is null ? null : Unserializable(value);
+        }
     }
 
     private object? MaskPropertyValue(string key, object? value, List<string> maskedKeyNames)
@@ -162,7 +342,18 @@ internal sealed class TjiddeLogger : ILogger
 
     private string FormatException(Exception exception)
     {
-        var formatted = _exceptionFormatter.Format(exception);
+        string formatted;
+        try
+        {
+            formatted = _exceptionFormatter.Format(exception);
+        }
+        catch (Exception formatterError)
+        {
+            // A custom IExceptionFormatter must not make logging throw; fall back to type and message.
+            formatted = $"{exception.GetType().FullName}: {SafeExceptionMessage(exception)} " +
+                        $"[exception formatter failed: {formatterError.GetType().Name}]";
+        }
+
         return _options.EnableSensitiveDataMasking ? _masker.MaskMessage(formatted) : formatted;
     }
 
@@ -181,21 +372,28 @@ internal sealed class TjiddeLogger : ILogger
         if (!_options.EnableOpenTelemetryExport)
             return;
 
-        var tags = BuildOpenTelemetryTags(logLevel, eventId, methodName, customer, message, exception, scopes, maskedKeyNames, properties);
-        var activityEvent = new ActivityEvent("log", timestamp, new ActivityTagsCollection(tags));
-
-        var currentActivity = Activity.Current;
-        if (currentActivity is not null)
+        try
         {
-            currentActivity.AddEvent(activityEvent);
-            return;
+            var tags = BuildOpenTelemetryTags(logLevel, eventId, methodName, customer, message, exception, scopes, maskedKeyNames, properties);
+            var activityEvent = new ActivityEvent("log", timestamp, new ActivityTagsCollection(tags));
+
+            var currentActivity = Activity.Current;
+            if (currentActivity is not null)
+            {
+                currentActivity.AddEvent(activityEvent);
+                return;
+            }
+
+            if (!_options.OpenTelemetryCreateFallbackActivity || _fallbackActivitySource is null)
+                return;
+
+            using var fallbackActivity = _fallbackActivitySource.StartActivity("tjidde.log", ActivityKind.Internal);
+            fallbackActivity?.AddEvent(activityEvent);
         }
-
-        if (!_options.OpenTelemetryCreateFallbackActivity || _fallbackActivitySource is null)
-            return;
-
-        using var fallbackActivity = _fallbackActivitySource.StartActivity("tjidde.log", ActivityKind.Internal);
-        fallbackActivity?.AddEvent(activityEvent);
+        catch (Exception)
+        {
+            // Exporting is best effort: a failing listener or tag value must not break logging.
+        }
     }
 
     private IEnumerable<KeyValuePair<string, object?>> BuildOpenTelemetryTags(
@@ -229,7 +427,8 @@ internal sealed class TjiddeLogger : ILogger
         if (exception is not null)
         {
             yield return new KeyValuePair<string, object?>("exception.type", exception.GetType().FullName);
-            yield return new KeyValuePair<string, object?>("exception.message", _options.EnableSensitiveDataMasking ? _masker.MaskMessage(exception.Message) : exception.Message);
+            var exceptionMessage = SafeExceptionMessage(exception);
+            yield return new KeyValuePair<string, object?>("exception.message", _options.EnableSensitiveDataMasking ? _masker.MaskMessage(exceptionMessage) : exceptionMessage);
             yield return new KeyValuePair<string, object?>("exception.stacktrace", FormatException(exception));
         }
 
@@ -304,11 +503,32 @@ internal sealed class TjiddeLogger : ILogger
         {
             var propertyMap = new Dictionary<string, object?>();
             foreach (var kvp in properties)
-                propertyMap[kvp.Key] = kvp.Value;
+                propertyMap[kvp.Key] = ToSerializableValue(kvp.Value);
             payload["properties"] = propertyMap;
         }
 
         return JsonSerializer.Serialize(payload, JsonOptions);
+    }
+
+    /// <summary>
+    /// Serializes one property value up front so a value that cannot be serialized (unsupported type,
+    /// throwing getter, too deep) only affects itself: it falls back to <c>ToString()</c>, or to
+    /// <c>[unserializable: TypeName]</c> when that throws too.
+    /// </summary>
+    private object? ToSerializableValue(object? value)
+    {
+        if (value is null)
+            return null;
+
+        try
+        {
+            return JsonSerializer.SerializeToElement(value, value.GetType(), JsonOptions);
+        }
+        catch (Exception)
+        {
+            var text = SafeToString(value);
+            return _options.EnableSensitiveDataMasking && text is not null ? _masker.MaskMessage(text) : text;
+        }
     }
 
     private LogLevel ResolveMinimumLevelForCategory()
@@ -422,12 +642,13 @@ internal sealed class TjiddeLogger : ILogger
 
     private string FormatScopeProperty(string key, object? value)
     {
+        var raw = SafeToString(value) ?? string.Empty;
         if (!_options.EnableSensitiveDataMasking)
-            return $"{key}={value}";
+            return $"{key}={raw}";
 
         var text = _masker.IsSensitiveKey(key)
-            ? _masker.MaskValue(key, value?.ToString() ?? string.Empty)
-            : _masker.MaskMessage(value?.ToString() ?? string.Empty);
+            ? _masker.MaskValue(key, raw)
+            : _masker.MaskMessage(raw);
         return $"{key}={text}";
     }
 
@@ -436,17 +657,25 @@ internal sealed class TjiddeLogger : ILogger
         var scopes = new List<string>();
         _scopeProvider?.ForEachScope((scope, list) =>
         {
-            switch (scope)
+            try
             {
-                case string s when !string.IsNullOrWhiteSpace(s):
-                    list.Add(_options.EnableSensitiveDataMasking ? _masker.MaskMessage(s) : s);
-                    break;
-                case IEnumerable<KeyValuePair<string, object?>> kvps:
+                switch (scope)
                 {
-                    list.AddRange(from kvp in kvps where !kvp.Key.Equals("MethodName", StringComparison.OrdinalIgnoreCase) select FormatScopeProperty(kvp.Key, kvp.Value));
+                    case string s when !string.IsNullOrWhiteSpace(s):
+                        list.Add(_options.EnableSensitiveDataMasking ? _masker.MaskMessage(s) : s);
+                        break;
+                    case IEnumerable<KeyValuePair<string, object?>> kvps:
+                    {
+                        list.AddRange(from kvp in kvps where !kvp.Key.Equals("MethodName", StringComparison.OrdinalIgnoreCase) select FormatScopeProperty(kvp.Key, kvp.Value));
 
-                    break;
+                        break;
+                    }
                 }
+            }
+            catch (Exception)
+            {
+                // A scope whose enumeration throws is skipped instead of failing the whole entry.
+                list.Add($"[unserializable scope: {scope?.GetType().FullName}]");
             }
         }, scopes);
         return scopes;
