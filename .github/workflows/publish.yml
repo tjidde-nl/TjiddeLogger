@@ -38,6 +38,13 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Check changelog entry
+        run: |
+          if ! grep -qF "## [${{ steps.version.outputs.version }}]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [${{ steps.version.outputs.version }}]' section; add the release notes before tagging"
+            exit 1
+          fi
+
       - name: Restore
         run: dotnet restore TjiddeLogger.sln
 

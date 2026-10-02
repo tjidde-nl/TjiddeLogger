@@ -523,6 +523,8 @@ Bij een privérepository is de policy eerst maar 7 dagen actief. Na de eerste ge
 
 ### Een versie uitbrengen
 
+Voeg eerst een sectie `## [1.0.4] - <datum>` toe aan `CHANGELOG.md` en commit die. De changelog wordt de release notes van het pakket op nuget.org, en de publish-workflow stopt als de getagde versie geen sectie heeft. Tag en push daarna:
+
 ```bash
 git tag v1.0.4
 git push origin v1.0.4

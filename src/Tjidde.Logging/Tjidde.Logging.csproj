@@ -10,7 +10,7 @@
 
     <!-- NuGet package metadata -->
     <PackageId>Tjidde.Logging</PackageId>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <Authors>Tjidde Nieuwenhuizen</Authors>
     <Company>Tjidde Nieuwenhuizen</Company>
     <Product>Tjidde.Logging</Product>
@@ -23,6 +23,8 @@
     <PackageProjectUrl>https://github.com/tjidde-nl/TjiddeLogger</PackageProjectUrl>
     <Copyright>Copyright © 2026 Tjidde Nieuwenhuizen</Copyright>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <!-- Shown on the "Release Notes" tab on nuget.org -->
+    <PackageReleaseNotes>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\..\CHANGELOG.md'))</PackageReleaseNotes>
   </PropertyGroup>
 
   <!-- Use framework-appropriate package versions to avoid unsupported TFM warnings -->
@@ -60,6 +62,7 @@
   <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
     <None Include="..\..\NOTICE" Pack="true" PackagePath="\" />
+    <None Include="..\..\CHANGELOG.md" Pack="true" PackagePath="\" />
     <None Include="..\..\docs\AI-INTEGRATION.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 

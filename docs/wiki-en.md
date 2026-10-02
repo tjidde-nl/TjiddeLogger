@@ -523,6 +523,8 @@ For a private repository the policy is first active for 7 days only. It becomes 
 
 ### Releasing a version
 
+First add a `## [1.0.4] - <date>` section to `CHANGELOG.md` and commit it. The changelog becomes the package's release notes on nuget.org, and the publish workflow stops if the tagged version has no section. Then tag and push:
+
 ```bash
 git tag v1.0.4
 git push origin v1.0.4
