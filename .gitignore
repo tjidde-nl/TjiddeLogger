@@ -42,3 +42,6 @@ desktop.ini
 
 # BenchmarkDotNet results
 BenchmarkDotNet.Artifacts/
+
+# Claude Code worktrees and local state
+.claude/
