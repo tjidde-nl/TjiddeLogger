@@ -3,6 +3,7 @@ using Tjidde.Logging.Extensions;
 using Tjidde.Logging.Formatting;
 using Tjidde.Logging.Masking;
 using Tjidde.Logging.Options;
+using Tjidde.Logging.Sinks;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Text.Json;
@@ -29,6 +30,7 @@ internal sealed class TjiddeLogger : ILogger
     private readonly TjiddeLoggerConfigurationHolder _configuration;
     private readonly ICustomerContextAccessor _customerContextAccessor;
     private readonly ConsoleLogProcessor _processor;
+    private readonly LogSinkDispatcher _sinks;
     private readonly TimeProvider _timeProvider;
     private IExternalScopeProvider? _scopeProvider;
 
@@ -43,6 +45,7 @@ internal sealed class TjiddeLogger : ILogger
     /// Creates a logger that reads its settings from <paramref name="configuration"/> on every call,
     /// so a configuration change applies to this logger immediately.
     /// Timestamps come from <paramref name="timeProvider"/> (default: <see cref="TimeProvider.System"/>).
+    /// Entries go to the console (unless <see cref="TjiddeLoggerOptions.WriteToConsole"/> is off) and to <paramref name="sinks"/>.
     /// </summary>
     public TjiddeLogger(
         string categoryName,
@@ -50,8 +53,10 @@ internal sealed class TjiddeLogger : ILogger
         ICustomerContextAccessor customerContextAccessor,
         ConsoleLogProcessor processor,
         IExternalScopeProvider? scopeProvider,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        LogSinkDispatcher? sinks = null)
     {
+        _sinks = sinks ?? LogSinkDispatcher.Empty;
         _categoryName = categoryName;
         _configuration = configuration;
         _customerContextAccessor = customerContextAccessor;
@@ -70,14 +75,16 @@ internal sealed class TjiddeLogger : ILogger
         IExceptionFormatter exceptionFormatter,
         ConsoleLogProcessor processor,
         IExternalScopeProvider? scopeProvider,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        LogSinkDispatcher? sinks = null)
         : this(
             categoryName,
             new TjiddeLoggerConfigurationHolder(new TjiddeLoggerConfiguration(options, masker, exceptionFormatter)),
             customerContextAccessor,
             processor,
             scopeProvider,
-            timeProvider)
+            timeProvider,
+            sinks)
     {
     }
 
@@ -211,13 +218,54 @@ internal sealed class TjiddeLogger : ILogger
         if (config.Options.IncludeScopes && _scopeProvider is not null)
             scopes = CollectScopes(config);
 
+        // Formatted (and masked) once, for the rendered line and the sinks.
+        var formattedException = exception is null ? null : FormatException(config, exception);
+
         var rendered = config.Options.OutputFormat == TjiddeLogOutputFormat.Json
-            ? BuildJsonLogLine(config, now, logLevel, eventId, methodName, customer, message, exception, scopes, maskedKeyNames, properties)
-            : BuildTextLogLine(config, now, logLevel, eventId, methodName, customer, message, exception, scopes, maskedKeyNames);
+            ? BuildJsonLogLine(config, now, logLevel, eventId, methodName, customer, message, formattedException, scopes, maskedKeyNames, properties)
+            : BuildTextLogLine(now, logLevel, eventId, methodName, customer, message, formattedException, scopes, maskedKeyNames);
 
         ExportToOpenTelemetry(config, now, logLevel, eventId, methodName, customer, message, exception, scopes, maskedKeyNames, properties);
 
-        _processor.Enqueue(rendered, config.Options.OutputFormat == TjiddeLogOutputFormat.Text ? GetColor(logLevel, eventId) : null);
+        Emit(config, now, logLevel, eventId, methodName, customer, message, formattedException, rendered);
+    }
+
+    /// <summary>
+    /// Writes the rendered entry to the console (when <see cref="TjiddeLoggerOptions.WriteToConsole"/> is on)
+    /// and passes it to the sinks. Only masked data reaches either.
+    /// </summary>
+    private void Emit(
+        TjiddeLoggerConfiguration config,
+        DateTimeOffset timestamp,
+        LogLevel logLevel,
+        EventId eventId,
+        string? methodName,
+        string? customer,
+        string message,
+        string? formattedException,
+        string rendered)
+    {
+        var format = config.Options.OutputFormat;
+        if (config.Options.WriteToConsole)
+            _processor.Enqueue(rendered, format == TjiddeLogOutputFormat.Text ? GetColor(logLevel, eventId) : null);
+
+        if (!_sinks.IsActive)
+            return;
+
+        _sinks.Dispatch(new TjiddeLogEntry
+        {
+            Timestamp = timestamp,
+            Level = logLevel,
+            EventId = eventId,
+            Category = _categoryName,
+            ClassName = _className,
+            MethodName = methodName,
+            Customer = customer,
+            Message = message,
+            FormattedException = formattedException,
+            RenderedLine = rendered,
+            OutputFormat = format
+        });
     }
 
     /// <summary>
@@ -260,7 +308,7 @@ internal sealed class TjiddeLogger : ILogger
                        $"[Log entry could not be rendered completely: {failure}] | Category: {_categoryName}";
             }
 
-            _processor.Enqueue(line, config.Options.OutputFormat == TjiddeLogOutputFormat.Text ? GetColor(logLevel, eventId) : null);
+            Emit(config, now, logLevel, eventId, methodName: null, customer: null, message, formattedException: null, line);
         }
         catch (Exception)
         {
@@ -522,14 +570,13 @@ internal sealed class TjiddeLogger : ILogger
     }
 
     private string BuildTextLogLine(
-        TjiddeLoggerConfiguration config,
         DateTimeOffset timestamp,
         LogLevel logLevel,
         EventId eventId,
         string? methodName,
         string? customer,
         string message,
-        Exception? exception,
+        string? formattedException,
         List<string>? scopes,
         List<string> maskedKeyNames)
     {
@@ -539,8 +586,8 @@ internal sealed class TjiddeLogger : ILogger
         if (maskedKeyNames.Count > 0)
             sb.Append($" [Masked: {string.Join(", ", maskedKeyNames)}]");
 
-        if (exception is not null)
-            sb.Append($" | Exception: {FormatException(config, exception)}");
+        if (formattedException is not null)
+            sb.Append($" | Exception: {formattedException}");
 
         if (scopes is { Count: > 0 })
             sb.Append($" | Scopes: {string.Join(" > ", scopes)}");
@@ -556,7 +603,7 @@ internal sealed class TjiddeLogger : ILogger
         string? methodName,
         string? customer,
         string message,
-        Exception? exception,
+        string? formattedException,
         List<string>? scopes,
         List<string> maskedKeyNames,
         List<KeyValuePair<string, object?>>? properties)
@@ -574,7 +621,7 @@ internal sealed class TjiddeLogger : ILogger
             ["method"] = methodName,
             ["scopes"] = scopes is { Count: > 0 } ? scopes : null,
             ["maskedFields"] = maskedKeyNames.Count > 0 ? maskedKeyNames : null,
-            ["exception"] = exception is null ? null : FormatException(config, exception)
+            ["exception"] = formattedException
         };
 
         if (properties is { Count: > 0 })
