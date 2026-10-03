@@ -29,6 +29,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Performance
 Output is unchanged; see `benchmarks/README.md` for the measurements (new BenchmarkDotNet project `benchmarks/Tjidde.Logging.Benchmarks`).
 - `SensitiveDataMasker.MaskMessage` skips the regular expressions of a key that does not occur in the text (case-insensitive ordinal check, on .NET 9+ one `SearchValues<string>` scan for all keys). Text with non-ASCII characters and non-ASCII keys still always run the expressions, because those can match case-insensitively in ways an ordinal comparison does not.
+- Fewer allocations per entry: the list of masked property names is only created when a property is masked, the property list is sized up front, the scopes are read in one pass (method name and scope texts together, without closures or LINQ), and the text line is written into one reused `StringBuilder` per thread instead of via intermediate strings.
 
 ### Fixed
 - `LogMetrics` threw an `ArgumentOutOfRangeException` when another provider, such as the Microsoft console logger (`AddConsole()`), was also registered.

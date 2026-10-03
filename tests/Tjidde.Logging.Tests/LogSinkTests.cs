@@ -207,6 +207,65 @@ public sealed class LogSinkTests
         sink.GetSnapshot().Select(e => e.Message).Should().Equal("outer");
     }
 
+    [Theory]
+    [InlineData(TjiddeLogOutputFormat.Text)]
+    [InlineData(TjiddeLogOutputFormat.Json)]
+    public void EntryLoggedWhileReadingScopes_DoesNotAffectTheOuterEntry(TjiddeLogOutputFormat format)
+    {
+        // A scope value whose ToString() logs: the nested call runs while the outer entry is reading its scopes,
+        // on the same thread, and both entries must still get their own method name, scopes and line.
+        var monitor = new TestOptionsMonitor(new TjiddeLoggerOptions { WriteToConsole = false, OutputFormat = format });
+        var sink = new InMemoryLogSink();
+        var value = new LoggingValue();
+
+        using (var provider = CreateProvider(monitor, sink))
+        {
+            provider.SetScopeProvider(new LoggerExternalScopeProvider());
+            var logger = provider.CreateLogger("My.App.OrderService");
+            value.Logger = logger;
+            using (logger.BeginScope("Order pipeline"))
+            using (logger.BeginScope(new Dictionary<string, object?> { ["MethodName"] = "Process", ["Item"] = value }))
+            {
+                logger.LogInformation("outer {Count}", 1);
+            }
+        }
+
+        var entries = sink.GetSnapshot();
+        entries.Select(e => e.Message).Should().Equal("inner [REDACTED]", "outer 1");
+        entries.Select(e => e.MethodName).Should().Equal("Process", "Process");
+        if (format == TjiddeLogOutputFormat.Text)
+        {
+            entries[0].RenderedLine.Should().EndWith("inner [REDACTED] [Masked: Password] | Scopes: Order pipeline > Item=value");
+            entries[1].RenderedLine.Should().EndWith("outer 1 | Scopes: Order pipeline > Item=value");
+        }
+        else
+        {
+            foreach (var entry in entries)
+            {
+                using var json = JsonDocument.Parse(entry.RenderedLine);
+                json.RootElement.GetProperty("scopes").EnumerateArray().Select(e => e.GetString())
+                    .Should().Equal("Order pipeline", "Item=value");
+            }
+        }
+    }
+
+    private sealed class LoggingValue
+    {
+        private bool _logged;
+        public ILogger? Logger;
+
+        public override string ToString()
+        {
+            if (!_logged)
+            {
+                _logged = true;
+                Logger?.LogInformation("inner {Password}", "hunter2");
+            }
+
+            return "value";
+        }
+    }
+
     [Fact]
     public void DependencyInjection_PassesEntriesToEveryRegisteredSink()
     {
