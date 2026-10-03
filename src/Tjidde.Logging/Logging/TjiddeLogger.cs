@@ -5,6 +5,7 @@ using Tjidde.Logging.Masking;
 using Tjidde.Logging.Options;
 using Tjidde.Logging.Sinks;
 using Microsoft.Extensions.Logging;
+using System.Buffers;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -632,27 +633,203 @@ internal sealed class TjiddeLogger : ILogger
         List<string>? maskedKeyNames,
         List<KeyValuePair<string, object?>>? properties)
     {
-        var payload = new Dictionary<string, object?>
-        {
-            ["@timestamp"] = timestamp.ToString("O"),
-            ["message"] = message,
-            ["level"] = FormatLogLevel(logLevel, eventId),
-            ["category"] = _categoryName,
-            ["class"] = _className,
-            ["eventId"] = eventId.Id,
-            ["eventName"] = eventId.Name,
-            ["customer"] = customer,
-            ["method"] = methodName,
-            ["scopes"] = scopes is { Count: > 0 } ? scopes : null,
-            ["maskedFields"] = maskedKeyNames is { Count: > 0 } ? maskedKeyNames : null,
-            ["exception"] = formattedException
-        };
-
+        // Each property value is serialized on its own first, so a value that cannot be serialized only affects itself.
+        object?[]? values = null;
         if (properties is { Count: > 0 })
         {
+            values = new object?[properties.Count];
+            for (var i = 0; i < values.Length; i++)
+                values[i] = ToSerializableValue(config, properties[i].Value);
+        }
+
+        var line = new JsonLine(
+            timestamp.ToString("O"), message, FormatLogLevel(logLevel, eventId), _categoryName, _className, eventId,
+            customer, methodName, scopes is { Count: > 0 } ? scopes : null, maskedKeyNames is { Count: > 0 } ? maskedKeyNames : null,
+            formattedException, properties, values);
+
+        try
+        {
+            return WriteJsonLine(line);
+        }
+        catch (Exception)
+        {
+            // The direct writer failed (for example a value nested too deeply): serialize as before, which either
+            // produces the same line or fails the same way.
+            return SerializeJsonLine(line);
+        }
+    }
+
+    /// <summary>The parts of a JSON line; <c>Values</c> holds the serializable value of each property.</summary>
+    private readonly record struct JsonLine(
+        string Timestamp,
+        string Message,
+        string Level,
+        string Category,
+        string ClassName,
+        EventId EventId,
+        string? Customer,
+        string? Method,
+        List<string>? Scopes,
+        List<string>? MaskedFields,
+        string? Exception,
+        List<KeyValuePair<string, object?>>? Properties,
+        object?[]? Values);
+
+    private static readonly JsonWriterOptions JsonLineWriterOptions = new()
+    {
+        // As JsonSerializer writes with JsonOptions: default encoder, not indented, same maximum depth.
+        Encoder = JsonOptions.Encoder,
+        Indented = JsonOptions.WriteIndented,
+        MaxDepth = JsonOptions.MaxDepth
+    };
+
+    [ThreadStatic]
+    private static ArrayBufferWriter<byte>? _cachedJsonBuffer;
+
+    /// <summary>
+    /// Writes the line with a <see cref="Utf8JsonWriter"/>: the same JSON as <see cref="SerializeJsonLine"/>,
+    /// without building dictionaries and without the serializer's per-value type lookups.
+    /// </summary>
+    private static string WriteJsonLine(in JsonLine line)
+    {
+        // Reused per thread; nothing in here calls user code, so a nested log call cannot reach it while in use.
+        var buffer = _cachedJsonBuffer ?? new ArrayBufferWriter<byte>(512);
+        _cachedJsonBuffer = null;
+        buffer.Clear();
+
+        try
+        {
+            using (var writer = new Utf8JsonWriter(buffer, JsonLineWriterOptions))
+            {
+                writer.WriteStartObject();
+                writer.WriteString("@timestamp", line.Timestamp);
+                writer.WriteString("message", line.Message);
+                writer.WriteString("level", line.Level);
+                writer.WriteString("category", line.Category);
+                writer.WriteString("class", line.ClassName);
+                writer.WriteNumber("eventId", line.EventId.Id);
+                writer.WriteString("eventName", line.EventId.Name);
+                writer.WriteString("customer", line.Customer);
+                writer.WriteString("method", line.Method);
+                WriteStringArray(writer, "scopes", line.Scopes);
+                WriteStringArray(writer, "maskedFields", line.MaskedFields);
+                writer.WriteString("exception", line.Exception);
+
+                if (line.Properties is { Count: > 0 } properties)
+                {
+                    writer.WriteStartObject("properties");
+                    for (var i = 0; i < properties.Count; i++)
+                    {
+                        // A repeated name keeps its first position and its last value, as the dictionary did.
+                        var key = properties[i].Key;
+                        if (IndexOfKey(properties, key, 0, i) >= 0)
+                            continue;
+
+                        var last = i;
+                        for (var j = i + 1; j < properties.Count; j++)
+                        {
+                            if (string.Equals(properties[j].Key, key, StringComparison.Ordinal))
+                                last = j;
+                        }
+
+                        writer.WritePropertyName(key);
+                        WriteValue(writer, line.Values![last]);
+                    }
+
+                    writer.WriteEndObject();
+                }
+
+                writer.WriteEndObject();
+            }
+
+            return Encoding.UTF8.GetString(buffer.WrittenSpan);
+        }
+        finally
+        {
+            if (buffer.Capacity <= 16 * 1024)
+                _cachedJsonBuffer = buffer;
+        }
+    }
+
+    private static int IndexOfKey(List<KeyValuePair<string, object?>> properties, string key, int start, int end)
+    {
+        for (var i = start; i < end; i++)
+        {
+            if (string.Equals(properties[i].Key, key, StringComparison.Ordinal))
+                return i;
+        }
+
+        return -1;
+    }
+
+    private static void WriteStringArray(Utf8JsonWriter writer, string name, List<string>? values)
+    {
+        if (values is null)
+        {
+            writer.WriteNull(name);
+            return;
+        }
+
+        writer.WriteStartArray(name);
+        foreach (var value in values)
+            writer.WriteStringValue(value);
+        writer.WriteEndArray();
+    }
+
+    /// <summary>Writes a value produced by <see cref="ToSerializableValue"/>.</summary>
+    private static void WriteValue(Utf8JsonWriter writer, object? value)
+    {
+        switch (value)
+        {
+            case null:
+                writer.WriteNullValue();
+                break;
+            case JsonElement element:
+                element.WriteTo(writer);
+                break;
+            case string text:
+                writer.WriteStringValue(text);
+                break;
+            case int number:
+                writer.WriteNumberValue(number);
+                break;
+            case long number:
+                writer.WriteNumberValue(number);
+                break;
+            case bool flag:
+                writer.WriteBooleanValue(flag);
+                break;
+            default:
+                // Not produced by ToSerializableValue; written by the serializer, as before.
+                JsonSerializer.Serialize(writer, value, value.GetType(), JsonOptions);
+                break;
+        }
+    }
+
+    /// <summary>The original way to write the line: dictionaries serialized by <see cref="JsonSerializer"/>.</summary>
+    private static string SerializeJsonLine(in JsonLine line)
+    {
+        var payload = new Dictionary<string, object?>
+        {
+            ["@timestamp"] = line.Timestamp,
+            ["message"] = line.Message,
+            ["level"] = line.Level,
+            ["category"] = line.Category,
+            ["class"] = line.ClassName,
+            ["eventId"] = line.EventId.Id,
+            ["eventName"] = line.EventId.Name,
+            ["customer"] = line.Customer,
+            ["method"] = line.Method,
+            ["scopes"] = line.Scopes,
+            ["maskedFields"] = line.MaskedFields,
+            ["exception"] = line.Exception
+        };
+
+        if (line.Properties is { Count: > 0 } properties)
+        {
             var propertyMap = new Dictionary<string, object?>();
-            foreach (var kvp in properties)
-                propertyMap[kvp.Key] = ToSerializableValue(config, kvp.Value);
+            for (var i = 0; i < properties.Count; i++)
+                propertyMap[properties[i].Key] = line.Values![i];
             payload["properties"] = propertyMap;
         }
 
@@ -666,8 +843,16 @@ internal sealed class TjiddeLogger : ILogger
     /// </summary>
     private object? ToSerializableValue(TjiddeLoggerConfiguration config, object? value)
     {
-        if (value is null)
-            return null;
+        // Values that serialize to themselves are written directly, which gives the same JSON as their element.
+        // Strings with surrogates go through the serializer, whose round trip may change unpaired surrogates.
+        switch (value)
+        {
+            case null:
+                return null;
+            case string text when !ContainsSurrogate(text):
+            case int or long or bool:
+                return value;
+        }
 
         try
         {
@@ -678,6 +863,21 @@ internal sealed class TjiddeLogger : ILogger
             var text = SafeToString(value);
             return config.Options.EnableSensitiveDataMasking && text is not null ? config.Masker.MaskMessage(text) : text;
         }
+    }
+
+    private static bool ContainsSurrogate(string text)
+    {
+#if NET8_0_OR_GREATER
+        return text.AsSpan().IndexOfAnyInRange('\uD800', '\uDFFF') >= 0;
+#else
+        foreach (var c in text)
+        {
+            if (char.IsSurrogate(c))
+                return true;
+        }
+
+        return false;
+#endif
     }
 
     /// <summary>

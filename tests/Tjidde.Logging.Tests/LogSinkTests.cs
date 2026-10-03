@@ -267,6 +267,27 @@ public sealed class LogSinkTests
     }
 
     [Fact]
+    public void JsonFormat_WritesPropertyValuesLikeTheSerializer()
+    {
+        // Repeated names keep their first position and last value; strings are escaped by the default encoder;
+        // an unpaired surrogate becomes U+FFFD and NaN falls back to its text, as with JsonSerializer.
+        var monitor = new TestOptionsMonitor(new TjiddeLoggerOptions { WriteToConsole = false, OutputFormat = TjiddeLogOutputFormat.Json });
+        var sink = new InMemoryLogSink();
+
+        using (var provider = CreateProvider(monitor, sink))
+        {
+            provider.CreateLogger("My.App.OrderService").LogInformation(
+                "{A} {A} {B} {Emoji} {Lone} {Long} {Flag} {Dbl} {Nan} {Dec} {Missing}",
+                1, 2, "x\"<>&\u00e9\n\t'+`", "\U0001F600 password=e", "a\ud800b", 5L, true, 1.5, double.NaN, 2.50m, null);
+        }
+
+        sink.GetSnapshot().Single().RenderedLine.Should().EndWith(
+            "\"properties\":{\"A\":2,\"B\":\"x\\u0022\\u003C\\u003E\\u0026\\u00E9\\n\\t\\u0027\\u002B\\u0060\"," +
+            "\"Emoji\":\"\\uD83D\\uDE00 password=[REDACTED]\",\"Lone\":\"a\\uFFFDb\",\"Long\":5,\"Flag\":true," +
+            "\"Dbl\":1.5,\"Nan\":\"NaN\",\"Dec\":2.50,\"Missing\":null}}");
+    }
+
+    [Fact]
     public void DependencyInjection_PassesEntriesToEveryRegisteredSink()
     {
         var instance = new InMemoryLogSink(10);
