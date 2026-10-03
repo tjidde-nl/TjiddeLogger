@@ -43,7 +43,7 @@ dotnet add package Tjidde.Logging
 Of voeg het handmatig toe aan uw `.csproj`:
 
 ```xml
-<PackageReference Include="Tjidde.Logging" Version="1.0.1" />
+<PackageReference Include="Tjidde.Logging" Version="*" />
 ```
 
 ---
@@ -111,15 +111,15 @@ public class OrderService
 Elke logmelding wordt als **één regel** geschreven in het volgende formaat:
 
 ```
-YYYY-MM-DD: HH:mm:ss: [NIVEAU] CS=>KlasseNaam Method=>MethodeNaam: Client=>Klant: Bericht [Masked: sleutel1, sleutel2] | Exception: [...] | Scopes: scope1 > scope2
+YYYY-MM-DD: HH:mm:ss: [NIVEAU] Class=>KlasseNaam Method=>MethodeNaam: Client=>Klant: Bericht [Masked: sleutel1, sleutel2] | Exception: [...] | Scopes: scope1 > scope2
 ```
 
 ### Voorbeelduitvoer
 
 ```
-2026-03-18: 09:15:41: [INFORMATION] CS=>OrderService Method=>PlaceOrder: Client=>AcmeCorp: Bestelling 42 succesvol geplaatst
-2026-03-18: 09:15:42: [ERROR] CS=>PaymentService Method=>ProcessPayment: Client=>AcmeCorp: Betaling mislukt | Exception: [System.InvalidOperationException: Gateway timeout]
-2026-03-18: 09:15:43: [WARNING] CS=>AuthService Method=>Login: Inloggen met password [REDACTED]
+2026-03-18: 09:15:41: [INFORMATION] Class=>OrderService Method=>PlaceOrder: Client=>AcmeCorp: Bestelling 42 succesvol geplaatst
+2026-03-18: 09:15:42: [ERROR] Class=>PaymentService Method=>ProcessPayment: Client=>AcmeCorp: Betaling mislukt | Exception: [System.InvalidOperationException: Gateway timeout]
+2026-03-18: 09:15:43: [WARNING] Class=>AuthService Method=>Login: Inloggen met password [REDACTED]
 ```
 
 ### Logniveaus
@@ -377,7 +377,7 @@ CustomerContext.Set("AcmeCorp");
 
 // Alle logmeldingen vanaf dit punt bevatten "AcmeCorp:" in de uitvoer.
 _logger.LogInformation("Verwerking gestart");
-// → 2026-03-18: 09:00:00: [INFORMATION] MyService: AcmeCorp: Verwerking gestart
+// → 2026-03-18: 09:00:00: [INFORMATION] Class=>MyService: Client=>AcmeCorp: Verwerking gestart
 ```
 
 ### Context wissen
@@ -570,7 +570,7 @@ _logger.LogMetrics(new EventId(200), "throughput_rps={Rps}", rps);
 ### Voorbeelduitvoer
 
 ```
-2026-03-18: 11:00:00: [METRICS] OrderService ProcessOrder: AcmeCorp: requests_total=42
+2026-03-18: 11:00:00: [METRICS] Class=>OrderService Method=>ProcessOrder: Client=>AcmeCorp: requests_total=42
 ```
 
 Het label `[METRICS]` wordt in **Magenta** weergegeven in de console voor eenvoudige visuele herkenning.

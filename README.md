@@ -1,5 +1,8 @@
 ﻿# Tjidde.Logging
 
+[![NuGet](https://img.shields.io/nuget/v/Tjidde.Logging.svg)](https://www.nuget.org/packages/Tjidde.Logging)
+[![CI](https://github.com/tjidde-nl/TjiddeLogger/actions/workflows/ci.yml/badge.svg)](https://github.com/tjidde-nl/TjiddeLogger/actions/workflows/ci.yml)
+
 A reusable NuGet package for standardized, structured logging in .NET applications.  
 Integrates naturally with the Microsoft.Extensions.Logging pipeline.
 
@@ -35,7 +38,7 @@ dotnet add package Tjidde.Logging
 Or via PackageReference:
 
 ```xml
-<PackageReference Include="Tjidde.Logging" Version="1.0.0" />
+<PackageReference Include="Tjidde.Logging" Version="*" />
 ```
 
 ---
@@ -116,7 +119,7 @@ CustomerContext.Set("AcmeCorp");
 
 // Later in any service in the same async flow:
 _logger.LogInformation("Order placed successfully.");
-// Output: 2024-03-17: 14:22:01: [INF] OrderService: AcmeCorp: Order placed successfully.
+// Output: 2024-03-17: 14:22:01: [INFORMATION] Class=>OrderService: Client=>AcmeCorp: Order placed successfully.
 
 // Clear when done (optional — AsyncLocal is scoped to the flow):
 CustomerContext.Clear();
@@ -161,7 +164,7 @@ public class OrderService
 
 Output:
 ```
-2024-03-17: 14:22:01: [INF] OrderService: AcmeCorp: Placing order 42
+2024-03-17: 14:22:01: [INFORMATION] Class=>OrderService: Client=>AcmeCorp: Placing order 42
 ```
 
 ### Logging an exception
@@ -179,14 +182,7 @@ catch (Exception ex)
 
 Output:
 ```
-2024-03-17: 14:22:01: [ERR] OrderService: AcmeCorp: Failed to process order 42
-Exception Type : System.InvalidOperationException
-Message        : Payment gateway timeout
-Stack Trace    :
-  at OrderService.ProcessPayment() in OrderService.cs:line 42
-Inner Exception:
-  -> Exception Type : System.TimeoutException
-  -> Message        : The operation timed out
+2024-03-17: 14:22:01: [ERROR] Class=>OrderService: Client=>AcmeCorp: Failed to process order 42 | Exception: [System.InvalidOperationException: Payment gateway timeout | StackTrace: at OrderService.ProcessPayment() in OrderService.cs:line 42] -> [System.TimeoutException: The operation timed out]
 ```
 
 ---
@@ -290,7 +286,7 @@ Values that are only known at runtime (a token from a vault, a customer code) ca
 The following capabilities are **intentionally not implemented** in v1.0 but the package is designed to support them:
 
 - **Method argument logging** — The `ICustomerContextAccessor` and scope design allow future decorator/interceptor-based enrichment. Attribute-based exclusion (`[SensitiveArgument]`) can be layered on top.
-- **Structured output formats** — JSON or OTLP output can be added as alternative formatters.
+- **Additional structured outputs** — JSON is built in; OTLP/log-record output can be added as an alternative formatter or sink.
 - **Automatic argument logging** — Explicitly deferred due to privacy, security, and performance risks. When added, it will require opt-in per method or argument.
 
 ---

@@ -43,7 +43,7 @@ dotnet add package Tjidde.Logging
 Or add it manually to your `.csproj`:
 
 ```xml
-<PackageReference Include="Tjidde.Logging" Version="1.0.1" />
+<PackageReference Include="Tjidde.Logging" Version="*" />
 ```
 
 ---
@@ -111,15 +111,15 @@ public class OrderService
 Every log entry is written as a **single line** in the following format:
 
 ```
-YYYY-MM-DD: HH:mm:ss: [LEVEL] CS=>ClassName Method=>MethodName: Client=>Customer: Message [Masked: key1, key2] | Exception: [...] | Scopes: scope1 > scope2
+YYYY-MM-DD: HH:mm:ss: [LEVEL] Class=>ClassName Method=>MethodName: Client=>Customer: Message [Masked: key1, key2] | Exception: [...] | Scopes: scope1 > scope2
 ```
 
 ### Example output
 
 ```
-2026-03-18: 09:15:41: [INFORMATION] CS=>OrderService Method=>PlaceOrder: Client=>AcmeCorp: Order 42 placed successfully
-2026-03-18: 09:15:42: [ERROR] CS=>PaymentService Method=>ProcessPayment: Client=>AcmeCorp: Payment failed | Exception: [System.InvalidOperationException: Gateway timeout]
-2026-03-18: 09:15:43: [WARNING] CS=>AuthService Method=>Login: Login with password [REDACTED]
+2026-03-18: 09:15:41: [INFORMATION] Class=>OrderService Method=>PlaceOrder: Client=>AcmeCorp: Order 42 placed successfully
+2026-03-18: 09:15:42: [ERROR] Class=>PaymentService Method=>ProcessPayment: Client=>AcmeCorp: Payment failed | Exception: [System.InvalidOperationException: Gateway timeout]
+2026-03-18: 09:15:43: [WARNING] Class=>AuthService Method=>Login: Login with password [REDACTED]
 ```
 
 ### Log levels
@@ -377,7 +377,7 @@ CustomerContext.Set("AcmeCorp");
 
 // All log entries from this point forward will include "AcmeCorp:" in the output.
 _logger.LogInformation("Processing started");
-// → 2026-03-18: 09:00:00: [INFORMATION] MyService: AcmeCorp: Processing started
+// → 2026-03-18: 09:00:00: [INFORMATION] Class=>MyService: Client=>AcmeCorp: Processing started
 ```
 
 ### Clearing the context
@@ -570,7 +570,7 @@ _logger.LogMetrics(new EventId(200), "throughput_rps={Rps}", rps);
 ### Example output
 
 ```
-2026-03-18: 11:00:00: [METRICS] OrderService ProcessOrder: AcmeCorp: requests_total=42
+2026-03-18: 11:00:00: [METRICS] Class=>OrderService Method=>ProcessOrder: Client=>AcmeCorp: requests_total=42
 ```
 
 The `[METRICS]` label is printed in **Magenta** in the console for easy visual distinction.
