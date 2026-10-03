@@ -55,3 +55,31 @@ so compare the means as rough figures; the allocations are exact.
 Most of the time goes to sensitive data masking: `SensitiveDataMasker.MaskMessage` runs two regular expressions
 per sensitive key (17 built-in keys, so 34 regex scans) over the message and over every string property and scope
 value, even when the text contains none of the keys.
+
+## After optimization
+
+Commit under test: `improvements` after the masking pre-check, allocation reductions and `Utf8JsonWriter` JSON
+changes. Measured with `--job short` on .NET 10.0.12, Intel Core i7-8565U (laptop, 4 cores), Windows 11. ShortRun
+uses only three measured iterations, so use the means as a quick regression signal; allocations are the more stable
+part of this run.
+
+| Method               | Format |       Mean | Allocated | Mean vs baseline | Alloc vs baseline |
+|----------------------|--------|-----------:|----------:|-----------------:|------------------:|
+| Simple               | Text   |   499.2 ns |     296 B |           -87.7% |            -75.8% |
+| Structured           | Text   |   813.3 ns |     568 B |           -92.4% |            -63.8% |
+| SensitiveProperty    | Text   | 1,194.2 ns |    1128 B |           -92.3% |            -52.5% |
+| StructuredWithScopes | Text   | 1,272.0 ns |    1016 B |           -94.7% |            -62.9% |
+| StructuredWithSink   | Text   |   895.0 ns |     680 B |           -94.3% |            -59.5% |
+| Disabled             | Text   |     3.3 ns |       -   |           -57.6% |               n/a |
+| Simple               | Json   | 1,124.7 ns |     936 B |           -90.8% |            -56.4% |
+| Structured           | Json   | 1,638.8 ns |    1400 B |           -93.8% |            -64.2% |
+| SensitiveProperty    | Json   | 1,951.7 ns |    1912 B |           -92.6% |            -52.7% |
+| StructuredWithScopes | Json   | 2,072.0 ns |    1808 B |           -94.8% |            -59.2% |
+| StructuredWithSink   | Json   | 1,769.5 ns |    1512 B |           -91.8% |            -62.4% |
+| Disabled             | Json   |     3.0 ns |       -   |           -71.0% |               n/a |
+
+The masking pre-check removes almost all regex work for entries whose text and values do not contain a configured
+key, which explains the large wins in the simple and structured text paths. The allocation work removes per-entry
+temporary lists, scope closures and intermediate text strings, cutting text allocations by roughly 53-76%. The JSON
+writer change avoids building two dictionaries and writes common primitive values directly, which brings JSON
+allocations down by roughly 53-64% while preserving the rendered output.
