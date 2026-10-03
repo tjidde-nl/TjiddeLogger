@@ -26,6 +26,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - `AddTjiddeLogger` registers `TjiddeLoggerProvider` through a factory, so the container never has to choose between its constructors.
 - `IsEnabled` caches the resolved minimum level per logger until the options change, instead of matching `CategoryMinimumLevels` on every call.
 
+### Performance
+Output is unchanged; see `benchmarks/README.md` for the measurements (new BenchmarkDotNet project `benchmarks/Tjidde.Logging.Benchmarks`).
+- `SensitiveDataMasker.MaskMessage` skips the regular expressions of a key that does not occur in the text (case-insensitive ordinal check, on .NET 9+ one `SearchValues<string>` scan for all keys). Text with non-ASCII characters and non-ASCII keys still always run the expressions, because those can match case-insensitively in ways an ordinal comparison does not.
+
 ### Fixed
 - `LogMetrics` threw an `ArgumentOutOfRangeException` when another provider, such as the Microsoft console logger (`AddConsole()`), was also registered.
 - Logging no longer throws. A property value that cannot be serialized (unsupported type, throwing getter) falls back to its `ToString()`, or to `[unserializable: TypeName]` when that throws too; a value whose `ToString()` or enumeration throws no longer breaks the message (the template is used instead); a failing custom `IExceptionFormatter` falls back to exception type and message; scopes that throw are skipped; OpenTelemetry export failures are ignored. Any other failure while building the entry writes a minimal line with level, category, message and a note that rendering failed.
