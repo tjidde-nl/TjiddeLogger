@@ -12,8 +12,9 @@
 8. [Uitzonderingsopmaak](#uitzonderingsopmaak)
 9. [Scopes](#scopes)
 10. [Metrics-regels](#metrics-regels)
-11. [CI/CD (GitHub Actions)](#cicd-github-actions)
-12. [Toekomstige ontwikkelingen](#toekomstige-ontwikkelingen)
+11. [Sinks](#sinks)
+12. [CI/CD (GitHub Actions)](#cicd-github-actions)
+13. [Toekomstige ontwikkelingen](#toekomstige-ontwikkelingen)
 
 ---
 
@@ -278,6 +279,7 @@ builder.Logging.AddTjiddeLogger(options =>
 | Optie | Type | Standaard | Beschrijving |
 |---|---|---|---|
 | `OutputFormat` | `TjiddeLogOutputFormat` | `Text` | Weergavemodus: `Text` of `Json` (Elasticsearch-vriendelijke JSON-regel). |
+| `WriteToConsole` | `bool` | `true` | Schrijft regels naar de console. `false` schrijft alleen naar de geregistreerde [sinks](#sinks). |
 | `MinimumLevel` *(verouderd)* | `LogLevel` | `Trace` | Globaal minimum logniveau als er geen categorie-override matcht. Gebruik `Logging:Tjidde:LogLevel`; verdwijnt in 2.0. |
 | `CategoryMinimumLevels` *(verouderd)* | `IDictionary<string, LogLevel>` | `{}` | Categorie-/namespace-/klasse-specifieke minimum niveaus. Gebruik `Logging:Tjidde:LogLevel`; verdwijnt in 2.0. |
 | `EnableOpenTelemetryExport` | `bool` | `false` | Stuurt elke logregel als OpenTelemetry-event op de huidige `Activity` (voor OTEL-pipelines). |
@@ -583,6 +585,63 @@ Eerdere versies logden metrics op het aangepaste niveau `MetricsLoggerExtensions
 
 ---
 
+## Sinks
+
+De console is de standaardbestemming. Om regels ook ergens anders heen te sturen (een UI, een bestand, een test), implementeer je `ILogSink` (namespace `Tjidde.Logging.Sinks`) of gebruik je de ingebouwde `InMemoryLogSink`.
+
+### Sinks registreren
+
+```csharp
+builder.Logging
+    .AddTjiddeLogger()
+    .AddTjiddeInMemorySink(capacity: 500)   // ingebouwd, injecteer InMemoryLogSink om te lezen
+    .AddTjiddeSink<MyFileSink>();           // gemaakt door de container, ook injecteerbaar als MyFileSink
+
+builder.Logging.AddTjiddeSink(new MySink()); // een bestaande instantie
+builder.Services.AddSingleton<ILogSink, MyOtherSink>(); // gewone DI werkt ook
+```
+
+### Een sink schrijven
+
+```csharp
+public sealed class MyFileSink : ILogSink
+{
+    public void Write(TjiddeLogEntry entry)
+    {
+        // entry.RenderedLine is precies wat de console krijgt (tekst of JSON, zie entry.OutputFormat)
+    }
+}
+```
+
+`TjiddeLogEntry` is immutable en bevat alleen gemaskeerde gegevens:
+
+| Eigenschap | Beschrijving |
+|---|---|
+| `Timestamp` | `DateTimeOffset`; UTC of lokaal, volgens `UseUtcTimestamp` |
+| `Level` / `EventId` | Niveau en event-ID; `IsMetrics` is `true` voor `LogMetrics`-regels (event `Metrics`) |
+| `Category` / `ClassName` / `MethodName` | Loggercategorie, het laatste deel daarvan, en de methode uit een `MethodName`-scope |
+| `Customer` | De klantcontext, of `null` |
+| `Message` | Het gerenderde, gemaskeerde bericht |
+| `FormattedException` | De opgemaakte, gemaskeerde exception, of `null` |
+| `RenderedLine` / `OutputFormat` | De volledige gerenderde regel en het formaat daarvan |
+
+Regels:
+
+- Sinks worden **synchroon** aangeroepen op de thread die logt, in volgorde van registratie. `Write` moet snel en thread-safe zijn; zet trage I/O zelf in een wachtrij.
+- Een exception uit een sink wordt genegeerd: de logaanroep gooit nooit, en de console en de andere sinks krijgen de regel nog steeds.
+- Een regel die binnen `Write` gelogd wordt, gaat niet opnieuw naar de sinks, dus een sink kan niet recursief worden.
+- Een sink mag geen `ILogger<T>` of `ILoggerFactory` in zijn constructor vragen (circulaire afhankelijkheid).
+
+### InMemoryLogSink
+
+Bewaart de nieuwste `Capacity` regels (standaard 1000) en laat de oudste vallen. `GetSnapshot()` geeft een kopie, oudste eerst; daarnaast zijn er `Count`, `Clear()` en de events `EntryAdded` (op de logthread) en `Cleared`. Alle members zijn thread-safe. De voorbeelden in `samples/` gebruiken hem om de log te tonen in een Blazor-, Avalonia- en terminal-UI.
+
+### Console uitzetten
+
+`WriteToConsole = false` schrijft alleen naar de sinks, bijvoorbeeld in een desktop- of terminal-UI waar console-uitvoer ongewenst is. Het kan in `appsettings.json` (`"TjiddeLogger": { "WriteToConsole": false }`) en geldt direct wanneer de opties herladen.
+
+---
+
 ## CI/CD (GitHub Actions)
 
 In `.github/workflows/` staan twee workflows:
@@ -624,7 +683,7 @@ De tag bepaalt de pakketversie: `v1.0.4` publiceert `1.0.4`, en pre-releases zoa
 
 De volgende verbeteringen en functies zijn gepland of worden overwogen voor toekomstige releases:
 
-- **Bestandssink** — Loguitvoer wegschrijven naar roterende logbestanden naast de console.
+- **Bestandssink** — Een ingebouwde `ILogSink` die naar roterende logbestanden schrijft.
 - **Redactie-auditlog** — Optioneel een aparte auditmelding uitsturen met de lijst van gemaskeerde velden, voor compliancescenario's.
 - **Aangepaste gevoelige-sleutelproviders** — Het injecteren van `ISensitiveKeyProvider`-implementaties toestaan, zodat sleutels tijdens runtime uit configuratie of een secrets store kunnen worden geladen.
 - **NuGet-pakketondertekening** — Het NuGet-pakket ondertekenen in de pipeline voor supply-chain-beveiliging.

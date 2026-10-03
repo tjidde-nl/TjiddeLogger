@@ -12,8 +12,9 @@
 8. [Exception Formatting](#exception-formatting)
 9. [Scopes](#scopes)
 10. [Metrics Entries](#metrics-entries)
-11. [CI/CD (GitHub Actions)](#cicd-github-actions)
-12. [Future Work](#future-work)
+11. [Sinks](#sinks)
+12. [CI/CD (GitHub Actions)](#cicd-github-actions)
+13. [Future Work](#future-work)
 
 ---
 
@@ -278,6 +279,7 @@ builder.Logging.AddTjiddeLogger(options =>
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `OutputFormat` | `TjiddeLogOutputFormat` | `Text` | Log rendering mode: `Text` or `Json` (Elasticsearch-friendly JSON line). |
+| `WriteToConsole` | `bool` | `true` | Writes entries to the console. `false` writes only to the registered [sinks](#sinks). |
 | `MinimumLevel` *(obsolete)* | `LogLevel` | `Trace` | Global minimum log level fallback when no category override matches. Use `Logging:Tjidde:LogLevel` instead; removed in 2.0. |
 | `CategoryMinimumLevels` *(obsolete)* | `IDictionary<string, LogLevel>` | `{}` | Category/namespace/class-specific minimum levels. Use `Logging:Tjidde:LogLevel` instead; removed in 2.0. |
 | `EnableOpenTelemetryExport` | `bool` | `false` | Emits each log as an OpenTelemetry event on the current `Activity` (for OTEL pipelines). |
@@ -583,6 +585,63 @@ Earlier versions logged metrics at the custom level `MetricsLoggerExtensions.Met
 
 ---
 
+## Sinks
+
+The console is the default destination. To send entries somewhere else as well (a UI, a file, a test assertion), implement `ILogSink` (namespace `Tjidde.Logging.Sinks`) or use the built-in `InMemoryLogSink`.
+
+### Registering sinks
+
+```csharp
+builder.Logging
+    .AddTjiddeLogger()
+    .AddTjiddeInMemorySink(capacity: 500)   // built-in, inject InMemoryLogSink to read it
+    .AddTjiddeSink<MyFileSink>();           // created by the container, also injectable as MyFileSink
+
+builder.Logging.AddTjiddeSink(new MySink()); // an existing instance
+builder.Services.AddSingleton<ILogSink, MyOtherSink>(); // plain DI works too
+```
+
+### Writing a sink
+
+```csharp
+public sealed class MyFileSink : ILogSink
+{
+    public void Write(TjiddeLogEntry entry)
+    {
+        // entry.RenderedLine is exactly what the console gets (text or JSON, see entry.OutputFormat)
+    }
+}
+```
+
+`TjiddeLogEntry` is immutable and contains only masked data:
+
+| Property | Description |
+|---|---|
+| `Timestamp` | `DateTimeOffset`; UTC or local, following `UseUtcTimestamp` |
+| `Level` / `EventId` | Level and event ID; `IsMetrics` is `true` for `LogMetrics` entries (event `Metrics`) |
+| `Category` / `ClassName` / `MethodName` | Logger category, its last segment, and the method from a `MethodName` scope |
+| `Customer` | The customer context, or `null` |
+| `Message` | The rendered, masked message |
+| `FormattedException` | The formatted, masked exception, or `null` |
+| `RenderedLine` / `OutputFormat` | The complete rendered line and its format |
+
+Rules:
+
+- Sinks are called **synchronously** on the thread that logs, in registration order. `Write` must be fast and thread-safe; queue slow I/O yourself.
+- An exception thrown by a sink is ignored: the log call never throws, and the console and the other sinks still receive the entry.
+- An entry logged from inside `Write` is not sent to the sinks again, so a sink cannot recurse.
+- A sink must not take `ILogger<T>` or `ILoggerFactory` in its constructor (circular dependency).
+
+### InMemoryLogSink
+
+Keeps the newest `Capacity` entries (default 1000) and drops the oldest. `GetSnapshot()` returns a copy, oldest first; `Count`, `Clear()`, and the events `EntryAdded` (on the logging thread) and `Cleared` complete it. All members are thread-safe. The samples in `samples/` use it to show the log in a Blazor, Avalonia and terminal UI.
+
+### Console off
+
+`WriteToConsole = false` writes only to the sinks, for example in a desktop or terminal UI where console output is not wanted. It can be set in `appsettings.json` (`"TjiddeLogger": { "WriteToConsole": false }`) and applies immediately when the options reload.
+
+---
+
 ## CI/CD (GitHub Actions)
 
 Two workflows live in `.github/workflows/`:
@@ -624,7 +683,7 @@ The tag sets the package version: `v1.0.4` publishes `1.0.4`, and pre-releases s
 
 The following improvements and features are planned or considered for future releases:
 
-- **File sink** — Write log output to rolling log files in addition to the console.
+- **File sink** — A built-in `ILogSink` that writes rolling log files.
 - **Redaction audit log** — Optionally emit a separate audit entry listing which fields were redacted, for compliance scenarios.
 - **Custom sensitive key providers** — Allow injecting `ISensitiveKeyProvider` implementations so keys can be loaded from configuration or a secrets store at runtime.
 - **NuGet package signing** — Sign the NuGet package in the pipeline for supply-chain security.

@@ -191,6 +191,35 @@ Inner Exception:
 
 ---
 
+## Sinks: writing to more than the console
+
+The console is the default destination. Extra destinations implement `ILogSink` (namespace `Tjidde.Logging.Sinks`) and receive every entry as an immutable `TjiddeLogEntry`: `Timestamp`, `Level`, `EventId`, `Category`, `ClassName`, `MethodName`, `Customer`, `Message`, `FormattedException`, `RenderedLine` (text or JSON, as on the console), `OutputFormat` and `IsMetrics`. All text in the entry is masked; it never contains unmasked values.
+
+```csharp
+builder.Logging
+    .AddTjiddeLogger()
+    .AddTjiddeInMemorySink(capacity: 500)   // built-in: inject InMemoryLogSink to read the entries
+    .AddTjiddeSink<MyFileSink>();           // your own sink, created by the container
+
+// or register directly:
+builder.Services.AddSingleton<ILogSink, MyFileSink>();
+```
+
+```csharp
+public sealed class MyFileSink : ILogSink
+{
+    public void Write(TjiddeLogEntry entry) { /* fast, thread-safe */ }
+}
+```
+
+- Sinks are called **synchronously** on the logging thread, in registration order. Keep `Write` fast and thread-safe; queue slow I/O yourself.
+- An exception in a sink is ignored: logging never throws, and the console and the other sinks still get the entry. An entry logged from inside a sink is not sent to the sinks again.
+- A sink must not take `ILogger<T>` in its constructor (circular dependency).
+- `InMemoryLogSink` keeps the newest `Capacity` entries (default 1000), with `GetSnapshot()`, `Count`, `Clear()` and the events `EntryAdded` and `Cleared`. Useful for UIs and tests.
+- Set `WriteToConsole = false` (or `"TjiddeLogger": { "WriteToConsole": false }`) to write only to the sinks, for example in a desktop or terminal UI. It applies immediately when the options reload.
+
+---
+
 ## Output Format
 
 ```
@@ -210,6 +239,7 @@ YYYY-MM-DD: HH:mm:ss: [LEVEL] Class=>ClassName Method=>MethodName: Client=>Custo
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
+| `WriteToConsole` | `bool` | `true` | Write entries to the console; `false` writes only to the registered sinks |
 | `IncludeScopes` | `bool` | `true` | Include scope information in output |
 | `UseUtcTimestamp` | `bool` | `false` | Write timestamps in UTC instead of local time |
 | `ResolveMethodNameFromStackTrace` | `bool` | `false` | Fall back to the stack trace for the method name when no `MethodName` scope is active (slow) |
@@ -260,7 +290,6 @@ Values that are only known at runtime (a token from a vault, a customer code) ca
 The following capabilities are **intentionally not implemented** in v1.0 but the package is designed to support them:
 
 - **Method argument logging** — The `ICustomerContextAccessor` and scope design allow future decorator/interceptor-based enrichment. Attribute-based exclusion (`[SensitiveArgument]`) can be layered on top.
-- **Sink abstraction** — Currently writes to Console. A future `ITjiddeLogSink` abstraction can route output to files, databases, or external systems.
 - **Structured output formats** — JSON or OTLP output can be added as alternative formatters.
 - **Automatic argument logging** — Explicitly deferred due to privacy, security, and performance risks. When added, it will require opt-in per method or argument.
 
@@ -280,8 +309,13 @@ Tjidde.Logging/
 │   ├── IExceptionFormatter.cs            # Exception formatting contract
 │   └── ExceptionFormatter.cs            # Structured exception output
 ├── Logging/
+│   ├── ConsoleLogProcessor.cs          # Background console writer (default sink)
 │   ├── TjiddeLogger.cs                 # ILogger implementation
 │   └── TjiddeLoggerProvider.cs         # ILoggerProvider implementation
+├── Sinks/
+│   ├── ILogSink.cs                       # Extra destinations for entries
+│   ├── TjiddeLogEntry.cs                 # Immutable, masked entry passed to sinks
+│   └── InMemoryLogSink.cs                # Built-in bounded in-memory sink
 ├── Masking/
 │   ├── IMaskedKeysAccessor.cs            # Runtime keys abstraction (+ GlobalMaskedKeysAccessor)
 │   ├── MaskedKeysStore.cs                # Per-host runtime keys (UseIsolatedMaskedKeys)
