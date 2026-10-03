@@ -1,0 +1,59 @@
+#nullable enable
+const Tjidde.Logging.Extensions.MetricsLoggerExtensions.MetricsEventIdValue = 10000 -> int
+const Tjidde.Logging.Extensions.MetricsLoggerExtensions.MetricsEventName = "Metrics" -> string!
+const Tjidde.Logging.Sinks.InMemoryLogSink.DefaultCapacity = 1000 -> int
+override Tjidde.Logging.Sinks.TjiddeLogEntry.ToString() -> string!
+static readonly Tjidde.Logging.Extensions.MetricsLoggerExtensions.MetricsEventId -> Microsoft.Extensions.Logging.EventId
+static Tjidde.Logging.Extensions.TjiddeLoggingBuilderExtensions.AddTjiddeInMemorySink(this Microsoft.Extensions.Logging.ILoggingBuilder! builder, int capacity = 1000) -> Microsoft.Extensions.Logging.ILoggingBuilder!
+static Tjidde.Logging.Extensions.TjiddeLoggingBuilderExtensions.AddTjiddeSink<TSink>(this Microsoft.Extensions.Logging.ILoggingBuilder! builder) -> Microsoft.Extensions.Logging.ILoggingBuilder!
+static Tjidde.Logging.Extensions.TjiddeLoggingBuilderExtensions.AddTjiddeSink<TSink>(this Microsoft.Extensions.Logging.ILoggingBuilder! builder, TSink! sink) -> Microsoft.Extensions.Logging.ILoggingBuilder!
+static Tjidde.Logging.Extensions.TjiddeLoggingBuilderExtensions.UseIsolatedMaskedKeys(this Microsoft.Extensions.Logging.ILoggingBuilder! builder) -> Microsoft.Extensions.Logging.ILoggingBuilder!
+Tjidde.Logging.Logging.TjiddeLoggerProvider.TjiddeLoggerProvider(Microsoft.Extensions.Options.IOptionsMonitor<Tjidde.Logging.Options.TjiddeLoggerOptions!>! optionsMonitor, Tjidde.Logging.Context.ICustomerContextAccessor! customerContextAccessor, Tjidde.Logging.Masking.IMaskedKeysAccessor! maskedKeysAccessor, System.TimeProvider! timeProvider) -> void
+Tjidde.Logging.Logging.TjiddeLoggerProvider.TjiddeLoggerProvider(Microsoft.Extensions.Options.IOptionsMonitor<Tjidde.Logging.Options.TjiddeLoggerOptions!>! optionsMonitor, Tjidde.Logging.Context.ICustomerContextAccessor! customerContextAccessor, Tjidde.Logging.Masking.IMaskedKeysAccessor! maskedKeysAccessor, System.TimeProvider! timeProvider, System.Collections.Generic.IEnumerable<Tjidde.Logging.Sinks.ILogSink!>? sinks) -> void
+Tjidde.Logging.Masking.MaskedKeysStore
+Tjidde.Logging.Masking.MaskedKeysStore.Add(params string![]! keys) -> void
+Tjidde.Logging.Masking.MaskedKeysStore.Clear() -> void
+Tjidde.Logging.Masking.MaskedKeysStore.GetKeys() -> System.Collections.Generic.IReadOnlyCollection<string!>!
+Tjidde.Logging.Masking.MaskedKeysStore.MaskedKeysStore() -> void
+Tjidde.Logging.Masking.MaskedKeysStore.Remove(params string![]! keys) -> void
+Tjidde.Logging.Options.TjiddeLoggerOptions.UseUtcTimestamp.get -> bool
+Tjidde.Logging.Options.TjiddeLoggerOptions.UseUtcTimestamp.set -> void
+Tjidde.Logging.Options.TjiddeLoggerOptions.WriteToConsole.get -> bool
+Tjidde.Logging.Options.TjiddeLoggerOptions.WriteToConsole.set -> void
+Tjidde.Logging.Sinks.ILogSink
+Tjidde.Logging.Sinks.ILogSink.Write(Tjidde.Logging.Sinks.TjiddeLogEntry! entry) -> void
+Tjidde.Logging.Sinks.InMemoryLogSink
+Tjidde.Logging.Sinks.InMemoryLogSink.Capacity.get -> int
+Tjidde.Logging.Sinks.InMemoryLogSink.Clear() -> void
+Tjidde.Logging.Sinks.InMemoryLogSink.Cleared -> System.EventHandler?
+Tjidde.Logging.Sinks.InMemoryLogSink.Count.get -> int
+Tjidde.Logging.Sinks.InMemoryLogSink.EntryAdded -> System.EventHandler<Tjidde.Logging.Sinks.TjiddeLogEntry!>?
+Tjidde.Logging.Sinks.InMemoryLogSink.GetSnapshot() -> System.Collections.Generic.IReadOnlyList<Tjidde.Logging.Sinks.TjiddeLogEntry!>!
+Tjidde.Logging.Sinks.InMemoryLogSink.InMemoryLogSink() -> void
+Tjidde.Logging.Sinks.InMemoryLogSink.InMemoryLogSink(int capacity) -> void
+Tjidde.Logging.Sinks.InMemoryLogSink.Write(Tjidde.Logging.Sinks.TjiddeLogEntry! entry) -> void
+Tjidde.Logging.Sinks.TjiddeLogEntry
+Tjidde.Logging.Sinks.TjiddeLogEntry.Category.get -> string!
+Tjidde.Logging.Sinks.TjiddeLogEntry.Category.init -> void
+Tjidde.Logging.Sinks.TjiddeLogEntry.ClassName.get -> string!
+Tjidde.Logging.Sinks.TjiddeLogEntry.ClassName.init -> void
+Tjidde.Logging.Sinks.TjiddeLogEntry.Customer.get -> string?
+Tjidde.Logging.Sinks.TjiddeLogEntry.Customer.init -> void
+Tjidde.Logging.Sinks.TjiddeLogEntry.EventId.get -> Microsoft.Extensions.Logging.EventId
+Tjidde.Logging.Sinks.TjiddeLogEntry.EventId.init -> void
+Tjidde.Logging.Sinks.TjiddeLogEntry.FormattedException.get -> string?
+Tjidde.Logging.Sinks.TjiddeLogEntry.FormattedException.init -> void
+Tjidde.Logging.Sinks.TjiddeLogEntry.IsMetrics.get -> bool
+Tjidde.Logging.Sinks.TjiddeLogEntry.Level.get -> Microsoft.Extensions.Logging.LogLevel
+Tjidde.Logging.Sinks.TjiddeLogEntry.Level.init -> void
+Tjidde.Logging.Sinks.TjiddeLogEntry.Message.get -> string!
+Tjidde.Logging.Sinks.TjiddeLogEntry.Message.init -> void
+Tjidde.Logging.Sinks.TjiddeLogEntry.MethodName.get -> string?
+Tjidde.Logging.Sinks.TjiddeLogEntry.MethodName.init -> void
+Tjidde.Logging.Sinks.TjiddeLogEntry.OutputFormat.get -> Tjidde.Logging.Options.TjiddeLogOutputFormat
+Tjidde.Logging.Sinks.TjiddeLogEntry.OutputFormat.init -> void
+Tjidde.Logging.Sinks.TjiddeLogEntry.RenderedLine.get -> string!
+Tjidde.Logging.Sinks.TjiddeLogEntry.RenderedLine.init -> void
+Tjidde.Logging.Sinks.TjiddeLogEntry.Timestamp.get -> System.DateTimeOffset
+Tjidde.Logging.Sinks.TjiddeLogEntry.Timestamp.init -> void
+Tjidde.Logging.Sinks.TjiddeLogEntry.TjiddeLogEntry() -> void

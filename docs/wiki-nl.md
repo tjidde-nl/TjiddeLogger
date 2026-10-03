@@ -677,6 +677,18 @@ git push origin v1.0.4
 
 De tag bepaalt de pakketversie: `v1.0.4` publiceert `1.0.4`, en pre-releases zoals `v1.1.0-beta.1` werken ook. De `<Version>` in de `.csproj` geldt alleen voor lokale builds. Een versie die al op nuget.org staat, wordt overgeslagen in plaats van dat de workflow faalt.
 
+### Publieke API en package validation
+
+Twee controles voorkomen onbedoelde breaking changes:
+
+- **Publieke-API-bestanden.** `Microsoft.CodeAnalysis.PublicApiAnalyzers` vergelijkt de publieke API met twee bestanden naast `Tjidde.Logging.csproj`: `PublicAPI.Shipped.txt` (de API van de laatste release) en `PublicAPI.Unshipped.txt` (alles wat daarna is toegevoegd). Nieuwe publieke API die in geen van beide staat, geeft waarschuwing RS0016; voeg die toe aan `PublicAPI.Unshipped.txt` (met de RS0016-codefix in de IDE, of `dotnet format analyzers src/Tjidde.Logging/Tjidde.Logging.csproj --diagnostics RS0016`). Een vermelde API die niet meer klopt, bijvoorbeeld na een gewijzigde signatuur of standaardwaarde, geeft RS0017.
+- **Package validation.** `dotnet pack` haalt de versie uit `<PackageValidationBaselineVersion>` op van nuget.org en faalt als het nieuwe pakket daarmee niet compatibel is.
+
+Na elke release:
+
+1. Verplaats alle regels uit `PublicAPI.Unshipped.txt` naar `PublicAPI.Shipped.txt`. Beide bestanden houden `#nullable enable` als eerste regel, dus in `PublicAPI.Unshipped.txt` blijft alleen die regel over.
+2. Hoog `<PackageValidationBaselineVersion>` in `src/Tjidde.Logging/Tjidde.Logging.csproj` op naar de versie die je net hebt uitgebracht.
+
 ---
 
 ## Toekomstige ontwikkelingen

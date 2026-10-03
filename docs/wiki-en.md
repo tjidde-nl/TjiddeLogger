@@ -677,6 +677,18 @@ git push origin v1.0.4
 
 The tag sets the package version: `v1.0.4` publishes `1.0.4`, and pre-releases such as `v1.1.0-beta.1` work too. The `<Version>` in the `.csproj` only applies to local builds. Publishing a version that already exists on nuget.org is skipped instead of failing.
 
+### Public API and package validation
+
+Two checks guard against accidental breaking changes:
+
+- **Public API files.** `Microsoft.CodeAnalysis.PublicApiAnalyzers` compares the public API with two files next to `Tjidde.Logging.csproj`: `PublicAPI.Shipped.txt` (the API of the last release) and `PublicAPI.Unshipped.txt` (everything added since). New public API that is in neither file gives warning RS0016; add it to `PublicAPI.Unshipped.txt` (the RS0016 code fix in the IDE, or `dotnet format analyzers src/Tjidde.Logging/Tjidde.Logging.csproj --diagnostics RS0016`). A listed API that no longer matches, for example after a changed signature or default value, gives RS0017.
+- **Package validation.** `dotnet pack` downloads the version in `<PackageValidationBaselineVersion>` from nuget.org and fails if the new package breaks compatibility with it.
+
+After every release:
+
+1. Move all lines from `PublicAPI.Unshipped.txt` to `PublicAPI.Shipped.txt`. Both files keep `#nullable enable` as their first line, so `PublicAPI.Unshipped.txt` ends up with only that line.
+2. Raise `<PackageValidationBaselineVersion>` in `src/Tjidde.Logging/Tjidde.Logging.csproj` to the version you just released.
+
 ---
 
 ## Future Work
