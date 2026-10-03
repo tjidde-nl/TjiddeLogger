@@ -10,6 +10,7 @@
 
     <Application.Resources>
         <converters:LogLevelColorConverter x:Key="LevelColorConverter" />
+        <converters:LogLevelLabelConverter x:Key="LevelLabelConverter" />
     </Application.Resources>
 
 </Application>
