@@ -3,6 +3,7 @@
         xmlns:vm="using:Tjidde.Logging.DesktopApp.ViewModels"
         xmlns:sinks="using:Tjidde.Logging.Sinks"
         x:Class="Tjidde.Logging.DesktopApp.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
         Title="Tjidde Logger Demo"
         Width="1000" Height="700"
         MinWidth="700" MinHeight="500">
@@ -26,7 +27,7 @@
                     <StackPanel Grid.Column="0" Spacing="4">
                         <TextBlock Text="Customer / Tenant" Foreground="#AAAAAA" FontSize="12"/>
                         <TextBox Text="{Binding Customer}"
-                                 Watermark="e.g. Acme Corp"
+                                 PlaceholderText="e.g. Acme Corp"
                                  Background="#2A2A3E" Foreground="White"
                                  BorderBrush="#444466" />
                     </StackPanel>
@@ -43,7 +44,7 @@
                 <StackPanel Spacing="4">
                     <TextBlock Text="Message" Foreground="#AAAAAA" FontSize="12"/>
                     <TextBox Text="{Binding Message}"
-                             Watermark="Enter your log message…"
+                             PlaceholderText="Enter your log message…"
                              AcceptsReturn="True"
                              Height="70"
                              Background="#2A2A3E" Foreground="White"
@@ -59,7 +60,7 @@
                     <StackPanel Spacing="4">
                         <TextBlock Text="Exception message" Foreground="#AAAAAA" FontSize="12"/>
                         <TextBox Text="{Binding ExceptionMessage}"
-                                 Watermark="e.g. Something went wrong"
+                                 PlaceholderText="e.g. Something went wrong"
                                  Background="#2A2A3E" Foreground="White"
                                  BorderBrush="#444466" />
                     </StackPanel>
