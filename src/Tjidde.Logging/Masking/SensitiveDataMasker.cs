@@ -1,3 +1,6 @@
+#if NET9_0_OR_GREATER
+using System.Buffers;
+#endif
 using System.Text.RegularExpressions;
 
 namespace Tjidde.Logging.Masking;
@@ -171,9 +174,16 @@ public sealed class SensitiveDataMasker : ISensitiveDataMasker
         private const RegexOptions PatternOptions = RegexOptions.IgnoreCase;
 
         private readonly HashSet<string> _normalizedKeys = new(StringComparer.OrdinalIgnoreCase);
-        private readonly List<(Regex Pattern, MatchEvaluator Mask)> _patterns = [];
+        private readonly List<KeyPatterns> _patterns = [];
+#if NET9_0_OR_GREATER
+        // All ASCII keys at once: one vectorized scan tells whether a message can match any of their patterns.
+        private readonly SearchValues<string>? _asciiKeySearch;
+#endif
+        private readonly bool _hasNonAsciiKey;
         private readonly string[] _literals;
         private readonly string _placeholder;
+        private readonly MatchEvaluator _maskSeparatedValue;
+        private readonly MatchEvaluator _maskSpacedValue;
         private readonly object? _sourceReference;
         private readonly bool _hasSource;
         private readonly HashSet<string> _sourceKeys;
@@ -187,6 +197,8 @@ public sealed class SensitiveDataMasker : ISensitiveDataMasker
             object? sourceReference = null)
         {
             _placeholder = placeholder;
+            _maskSeparatedValue = MaskSeparatedValue;
+            _maskSpacedValue = MaskSpacedValue;
             _literals = literals.Where(literal => !string.IsNullOrWhiteSpace(literal)).ToArray();
             _sourceReference = sourceReference;
             _hasSource = source is not null;
@@ -203,17 +215,45 @@ public sealed class SensitiveDataMasker : ISensitiveDataMasker
 
                 // "password=value", "password: value", "\"password\": \"value\"", "Authorization: Bearer value".
                 // Quoted values are masked up to the closing quote, so values with spaces are masked completely.
-                _patterns.Add((new Regex(
+                var separated = new Regex(
                     $@"(?<prefix>{escaped}[""']?\s*[:=]\s*)(?:(?<quote>[""'])(?:\\.|(?!\k<quote>)[^\\\r\n])*\k<quote>|(?<scheme>(?:{AuthSchemes})\s+)?\S+)",
                     PatternOptions,
-                    matchTimeout), MaskSeparatedValue));
+                    matchTimeout);
 
                 // "password somevalue" (value must be 4+ chars to avoid natural language)
-                _patterns.Add((new Regex(
+                var spaced = new Regex(
                     $@"(?<prefix>{escaped}\s+[""']?(?:(?:{AuthSchemes})\s+)?)\S{{4,}}",
                     PatternOptions,
-                    matchTimeout), MaskSpacedValue));
+                    matchTimeout);
+
+                var isAscii = IsAscii(key);
+                _hasNonAsciiKey |= !isAscii;
+                _patterns.Add(new KeyPatterns(key, isAscii, separated, spaced));
             }
+
+#if NET9_0_OR_GREATER
+            var asciiKeys = _patterns.Where(p => p.KeyIsAscii).Select(p => p.Key).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (asciiKeys.Length > 0)
+                _asciiKeySearch = SearchValues.Create(asciiKeys, StringComparison.OrdinalIgnoreCase);
+#endif
+        }
+
+        /// <summary>The patterns of one key; every match of either pattern contains the key itself.</summary>
+        private sealed record KeyPatterns(string Key, bool KeyIsAscii, Regex Separated, Regex Spaced);
+
+        private static bool IsAscii(string text)
+        {
+#if NET8_0_OR_GREATER
+            return System.Text.Ascii.IsValid(text);
+#else
+            foreach (var c in text)
+            {
+                if (c > '\u007F')
+                    return false;
+            }
+
+            return true;
+#endif
         }
 
         public bool Contains(string normalizedKey) => _normalizedKeys.Contains(normalizedKey);
@@ -228,11 +268,28 @@ public sealed class SensitiveDataMasker : ISensitiveDataMasker
 
         public string MaskPatterns(string message)
         {
+            if (_patterns.Count == 0)
+                return message;
+
             try
             {
                 var result = message;
-                foreach (var (pattern, mask) in _patterns)
-                    result = pattern.Replace(result, mask);
+
+                // Every match contains its key, so a key that does not occur in the message cannot match and its
+                // patterns are skipped. The ordinal check only rules a key out for ASCII text and an ASCII key: there it
+                // agrees with the patterns' IgnoreCase matching, while non-ASCII text can match case-insensitively in
+                // ways an ordinal comparison does not (for example the Kelvin sign and "k"); those always run the patterns.
+                var resultIsAscii = IsAscii(result);
+#if NET9_0_OR_GREATER
+                if (resultIsAscii && !_hasNonAsciiKey && (_asciiKeySearch is null || !result.AsSpan().ContainsAny(_asciiKeySearch)))
+                    return result;
+#endif
+
+                foreach (var key in _patterns)
+                {
+                    result = Replace(key.Separated, result, _maskSeparatedValue, key, ref resultIsAscii);
+                    result = Replace(key.Spaced, result, _maskSpacedValue, key, ref resultIsAscii);
+                }
 
                 return result;
             }
@@ -241,6 +298,20 @@ public sealed class SensitiveDataMasker : ISensitiveDataMasker
                 // Masking took too long (a huge message). Hide all of it rather than leak a value or throw from a log call.
                 return _placeholder;
             }
+        }
+
+        private static string Replace(Regex pattern, string text, MatchEvaluator mask, KeyPatterns key, ref bool textIsAscii)
+        {
+            if (textIsAscii && key.KeyIsAscii && !text.Contains(key.Key, StringComparison.OrdinalIgnoreCase))
+                return text;
+
+            var replaced = pattern.Replace(text, mask);
+
+            // Regex.Replace returns the same instance when nothing matched; the placeholder may be non-ASCII.
+            if (!ReferenceEquals(replaced, text))
+                textIsAscii = IsAscii(replaced);
+
+            return replaced;
         }
 
         public string MaskLiterals(string message)

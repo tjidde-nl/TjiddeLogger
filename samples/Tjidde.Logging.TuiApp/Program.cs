@@ -1,5 +1,4 @@
 ﻿using Tjidde.Logging.Extensions;
-using Tjidde.Logging.TuiApp.Logging;
 using Tjidde.Logging.TuiApp.Services;
 using Tjidde.Logging.TuiApp.Views;
 using Microsoft.Extensions.DependencyInjection;
@@ -26,19 +25,19 @@ class Program
     private static ServiceProvider ConfigureServices()
     {
         var colorScheme = CreateColorScheme();
-        var sink = new InMemoryLogSink();
-
         var services = new ServiceCollection();
 
-        services.AddSingleton(sink);
         services.AddSingleton(colorScheme);
         services.AddSingleton<ILogService, LogService>();
         services.AddSingleton<MainView>();
 
-        services.AddSingleton<ILoggerProvider>(new InMemoryLoggerProvider(sink));
+        // Entries go to the built-in in-memory sink, which the log pane reads. The console sink is off:
+        // console output would draw over the terminal UI.
         services.AddLogging(builder =>
         {
-            builder.AddTjiddeLogger();
+            builder
+                .AddTjiddeLogger(options => options.WriteToConsole = false)
+                .AddTjiddeInMemorySink();
         });
 
         return services.BuildServiceProvider();

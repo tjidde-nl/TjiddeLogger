@@ -54,7 +54,7 @@ jobs:
         run: dotnet restore TjiddeLogger.sln
 
       - name: Build
-        run: dotnet build TjiddeLogger.sln --configuration Release --no-restore -p:Version=${{ steps.version.outputs.version }} -p:ContinuousIntegrationBuild=true
+        run: dotnet build TjiddeLogger.sln --configuration Release --no-restore -p:Version=${{ steps.version.outputs.version }}
 
       # Runs once per target framework (net7.0, net8.0, net9.0, net10.0)
       - name: Test

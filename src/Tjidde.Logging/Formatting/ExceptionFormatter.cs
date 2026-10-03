@@ -36,14 +36,14 @@ public sealed class ExceptionFormatter : IExceptionFormatter
         if (sb.Length > 0 && depth == 0)
             sb.Append(' ');
 
-        sb.Append($"{prefix}[{exception.GetType().FullName}: {exception.Message}");
+        sb.Append(prefix).Append('[').Append(exception.GetType().FullName).Append(": ").Append(exception.Message);
 
         if (_includeStackTrace && !string.IsNullOrWhiteSpace(exception.StackTrace))
         {
             var frames = exception.StackTrace
                 .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
                 .Select(l => l.Trim());
-            sb.Append($" | StackTrace: {string.Join(" | ", frames)}");
+            sb.Append(" | StackTrace: ").AppendJoin(" | ", frames);
         }
 
         sb.Append(']');

@@ -1,5 +1,4 @@
 using Avalonia;
-using Tjidde.Logging.DesktopApp.Logging;
 using Tjidde.Logging.DesktopApp.ViewModels;
 using Tjidde.Logging.Extensions;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,20 +15,16 @@ internal static class Program
     {
         var services = new ServiceCollection();
 
-        // Shared in-memory sink
-        var sink = new InMemoryLogSink();
-        services.AddSingleton(sink);
-
-        // Logging: Tjidde logger + in-memory capture
+        // Logging: Tjidde logger (console) + the built-in in-memory sink, which the UI reads
         services.AddLogging(builder =>
         {
             builder.SetMinimumLevel(LogLevel.Trace);
-            builder.AddTjiddeLogger(options =>
-            {
-                options.IncludeScopes = true;
-            });
-            builder.Services.AddSingleton<ILoggerProvider>(sp =>
-                new InMemoryLoggerProvider(sp.GetRequiredService<InMemoryLogSink>()));
+            builder
+                .AddTjiddeLogger(options =>
+                {
+                    options.IncludeScopes = true;
+                })
+                .AddTjiddeInMemorySink();
         });
 
         services.AddSingleton<MainViewModel>();

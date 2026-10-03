@@ -3,8 +3,12 @@ using Tjidde.Logging.Extensions;
 using Tjidde.Logging.Formatting;
 using Tjidde.Logging.Masking;
 using Tjidde.Logging.Options;
+using Tjidde.Logging.Sinks;
 using Microsoft.Extensions.Logging;
+using System.Buffers;
 using System.Diagnostics;
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -29,6 +33,7 @@ internal sealed class TjiddeLogger : ILogger
     private readonly TjiddeLoggerConfigurationHolder _configuration;
     private readonly ICustomerContextAccessor _customerContextAccessor;
     private readonly ConsoleLogProcessor _processor;
+    private readonly LogSinkDispatcher _sinks;
     private readonly TimeProvider _timeProvider;
     private IExternalScopeProvider? _scopeProvider;
 
@@ -43,6 +48,7 @@ internal sealed class TjiddeLogger : ILogger
     /// Creates a logger that reads its settings from <paramref name="configuration"/> on every call,
     /// so a configuration change applies to this logger immediately.
     /// Timestamps come from <paramref name="timeProvider"/> (default: <see cref="TimeProvider.System"/>).
+    /// Entries go to the console (unless <see cref="TjiddeLoggerOptions.WriteToConsole"/> is off) and to <paramref name="sinks"/>.
     /// </summary>
     public TjiddeLogger(
         string categoryName,
@@ -50,8 +56,10 @@ internal sealed class TjiddeLogger : ILogger
         ICustomerContextAccessor customerContextAccessor,
         ConsoleLogProcessor processor,
         IExternalScopeProvider? scopeProvider,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        LogSinkDispatcher? sinks = null)
     {
+        _sinks = sinks ?? LogSinkDispatcher.Empty;
         _categoryName = categoryName;
         _configuration = configuration;
         _customerContextAccessor = customerContextAccessor;
@@ -70,14 +78,16 @@ internal sealed class TjiddeLogger : ILogger
         IExceptionFormatter exceptionFormatter,
         ConsoleLogProcessor processor,
         IExternalScopeProvider? scopeProvider,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        LogSinkDispatcher? sinks = null)
         : this(
             categoryName,
             new TjiddeLoggerConfigurationHolder(new TjiddeLoggerConfiguration(options, masker, exceptionFormatter)),
             customerContextAccessor,
             processor,
             scopeProvider,
-            timeProvider)
+            timeProvider,
+            sinks)
     {
     }
 
@@ -182,9 +192,20 @@ internal sealed class TjiddeLogger : ILogger
         ref string? message)
     {
         var customer = _customerContextAccessor.GetCustomerContext();
-        var methodName = ResolveMethodName(config);
 
-        var maskedKeyNames = new List<string>();
+        // One pass over the scopes for both the MethodName scope and the scope texts (when scopes are included).
+        string? methodName;
+        List<string>? scopes = null;
+        if (config.Options.IncludeScopes && _scopeProvider is not null)
+            (methodName, scopes) = ReadScopes(config, _scopeProvider);
+        else
+            methodName = null;
+
+        if (methodName is null && config.Options.ResolveMethodNameFromStackTrace)
+            methodName = ExtractMethodFromStack();
+
+        // Allocated only when a property is actually masked.
+        List<string>? maskedKeyNames = null;
         List<KeyValuePair<string, object?>>? properties = null;
         string? originalFormat = null;
 
@@ -192,7 +213,10 @@ internal sealed class TjiddeLogger : ILogger
         // reach any output (text, JSON or OpenTelemetry) unmasked.
         if (state is IEnumerable<KeyValuePair<string, object?>> structuredState)
         {
-            properties = new List<KeyValuePair<string, object?>>();
+            // FormattedLogValues and LoggerMessage state know their count ({OriginalFormat} included).
+            properties = structuredState is IReadOnlyCollection<KeyValuePair<string, object?>> { Count: > 0 } sized
+                ? new List<KeyValuePair<string, object?>>(sized.Count)
+                : new List<KeyValuePair<string, object?>>();
             foreach (var kvp in structuredState)
             {
                 if (kvp.Key.Equals("{OriginalFormat}", StringComparison.Ordinal))
@@ -201,23 +225,60 @@ internal sealed class TjiddeLogger : ILogger
                     continue;
                 }
 
-                properties.Add(new KeyValuePair<string, object?>(kvp.Key, SafeMaskPropertyValue(config, kvp.Key, kvp.Value, maskedKeyNames)));
+                properties.Add(new KeyValuePair<string, object?>(kvp.Key, SafeMaskPropertyValue(config, kvp.Key, kvp.Value, ref maskedKeyNames)));
             }
         }
 
-        message = RenderMessage(config, state, exception, formatter, originalFormat, properties, maskedKeyNames.Count > 0);
+        message = RenderMessage(config, state, exception, formatter, originalFormat, properties, maskedKeyNames is not null);
 
-        List<string>? scopes = null;
-        if (config.Options.IncludeScopes && _scopeProvider is not null)
-            scopes = CollectScopes(config);
+        // Formatted (and masked) once, for the rendered line and the sinks.
+        var formattedException = exception is null ? null : FormatException(config, exception);
 
         var rendered = config.Options.OutputFormat == TjiddeLogOutputFormat.Json
-            ? BuildJsonLogLine(config, now, logLevel, eventId, methodName, customer, message, exception, scopes, maskedKeyNames, properties)
-            : BuildTextLogLine(config, now, logLevel, eventId, methodName, customer, message, exception, scopes, maskedKeyNames);
+            ? BuildJsonLogLine(config, now, logLevel, eventId, methodName, customer, message, formattedException, scopes, maskedKeyNames, properties)
+            : BuildTextLogLine(now, logLevel, eventId, methodName, customer, message, formattedException, scopes, maskedKeyNames);
 
         ExportToOpenTelemetry(config, now, logLevel, eventId, methodName, customer, message, exception, scopes, maskedKeyNames, properties);
 
-        _processor.Enqueue(rendered, config.Options.OutputFormat == TjiddeLogOutputFormat.Text ? GetColor(logLevel, eventId) : null);
+        Emit(config, now, logLevel, eventId, methodName, customer, message, formattedException, rendered);
+    }
+
+    /// <summary>
+    /// Writes the rendered entry to the console (when <see cref="TjiddeLoggerOptions.WriteToConsole"/> is on)
+    /// and passes it to the sinks. Only masked data reaches either.
+    /// </summary>
+    private void Emit(
+        TjiddeLoggerConfiguration config,
+        DateTimeOffset timestamp,
+        LogLevel logLevel,
+        EventId eventId,
+        string? methodName,
+        string? customer,
+        string message,
+        string? formattedException,
+        string rendered)
+    {
+        var format = config.Options.OutputFormat;
+        if (config.Options.WriteToConsole)
+            _processor.Enqueue(rendered, format == TjiddeLogOutputFormat.Text ? GetColor(logLevel, eventId) : null);
+
+        if (!_sinks.IsActive)
+            return;
+
+        _sinks.Dispatch(new TjiddeLogEntry
+        {
+            Timestamp = timestamp,
+            Level = logLevel,
+            EventId = eventId,
+            Category = _categoryName,
+            ClassName = _className,
+            MethodName = methodName,
+            Customer = customer,
+            Message = message,
+            FormattedException = formattedException,
+            RenderedLine = rendered,
+            OutputFormat = format
+        });
     }
 
     /// <summary>
@@ -260,7 +321,7 @@ internal sealed class TjiddeLogger : ILogger
                        $"[Log entry could not be rendered completely: {failure}] | Category: {_categoryName}";
             }
 
-            _processor.Enqueue(line, config.Options.OutputFormat == TjiddeLogOutputFormat.Text ? GetColor(logLevel, eventId) : null);
+            Emit(config, now, logLevel, eventId, methodName: null, customer: null, message, formattedException: null, line);
         }
         catch (Exception)
         {
@@ -273,7 +334,7 @@ internal sealed class TjiddeLogger : ILogger
     /// structured state yields its unrendered template, because the framework's formatter inserts raw
     /// (unmasked) values of sensitive properties.
     /// </summary>
-    private string? FallbackMessage<TState>(TjiddeLoggerConfiguration config, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+    private static string? FallbackMessage<TState>(TjiddeLoggerConfiguration config, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
     {
         if (config.Options.EnableSensitiveDataMasking && state is IEnumerable<KeyValuePair<string, object?>> structuredState)
         {
@@ -308,7 +369,7 @@ internal sealed class TjiddeLogger : ILogger
         }
     }
 
-    private string? TryMask(TjiddeLoggerConfiguration config, string? text)
+    private static string? TryMask(TjiddeLoggerConfiguration config, string? text)
     {
         if (text is null || !config.Options.EnableSensitiveDataMasking)
             return text;
@@ -353,7 +414,7 @@ internal sealed class TjiddeLogger : ILogger
 
     private static string Unserializable(object value) => $"[unserializable: {value.GetType().FullName}]";
 
-    private string RenderMessage<TState>(
+    private static string RenderMessage<TState>(
         TjiddeLoggerConfiguration config,
         TState state,
         Exception? exception,
@@ -386,11 +447,11 @@ internal sealed class TjiddeLogger : ILogger
         return config.Options.EnableSensitiveDataMasking ? config.Masker.MaskMessage(message) : message;
     }
 
-    private object? SafeMaskPropertyValue(TjiddeLoggerConfiguration config, string key, object? value, List<string> maskedKeyNames)
+    private static object? SafeMaskPropertyValue(TjiddeLoggerConfiguration config, string key, object? value, ref List<string>? maskedKeyNames)
     {
         try
         {
-            return MaskPropertyValue(config, key, value, maskedKeyNames);
+            return MaskPropertyValue(config, key, value, ref maskedKeyNames);
         }
         catch (Exception)
         {
@@ -399,14 +460,14 @@ internal sealed class TjiddeLogger : ILogger
         }
     }
 
-    private object? MaskPropertyValue(TjiddeLoggerConfiguration config, string key, object? value, List<string> maskedKeyNames)
+    private static object? MaskPropertyValue(TjiddeLoggerConfiguration config, string key, object? value, ref List<string>? maskedKeyNames)
     {
         if (!config.Options.EnableSensitiveDataMasking)
             return value;
 
         if (config.Masker.IsSensitiveKey(key))
         {
-            maskedKeyNames.Add(key);
+            (maskedKeyNames ??= []).Add(key);
             return config.Masker.MaskValue(key, value?.ToString() ?? string.Empty);
         }
 
@@ -414,7 +475,7 @@ internal sealed class TjiddeLogger : ILogger
         return value is string text ? config.Masker.MaskMessage(text) : value;
     }
 
-    private string FormatException(TjiddeLoggerConfiguration config, Exception exception)
+    private static string FormatException(TjiddeLoggerConfiguration config, Exception exception)
     {
         string formatted;
         try
@@ -441,7 +502,7 @@ internal sealed class TjiddeLogger : ILogger
         string message,
         Exception? exception,
         List<string>? scopes,
-        List<string> maskedKeyNames,
+        List<string>? maskedKeyNames,
         List<KeyValuePair<string, object?>>? properties)
     {
         if (!config.Options.EnableOpenTelemetryExport)
@@ -480,7 +541,7 @@ internal sealed class TjiddeLogger : ILogger
         string message,
         Exception? exception,
         List<string>? scopes,
-        List<string> maskedKeyNames,
+        List<string>? maskedKeyNames,
         List<KeyValuePair<string, object?>>? properties)
     {
         yield return new KeyValuePair<string, object?>("log.category", _categoryName);
@@ -511,7 +572,7 @@ internal sealed class TjiddeLogger : ILogger
         if (scopes is { Count: > 0 })
             yield return new KeyValuePair<string, object?>("log.scopes", string.Join(" > ", scopes));
 
-        if (maskedKeyNames.Count > 0)
+        if (maskedKeyNames is { Count: > 0 })
             yield return new KeyValuePair<string, object?>("log.masked_fields", string.Join(",", maskedKeyNames));
 
         if (properties is not null)
@@ -522,30 +583,42 @@ internal sealed class TjiddeLogger : ILogger
     }
 
     private string BuildTextLogLine(
-        TjiddeLoggerConfiguration config,
         DateTimeOffset timestamp,
         LogLevel logLevel,
         EventId eventId,
         string? methodName,
         string? customer,
         string message,
-        Exception? exception,
+        string? formattedException,
         List<string>? scopes,
-        List<string> maskedKeyNames)
+        List<string>? maskedKeyNames)
     {
-        var sb = new System.Text.StringBuilder();
-        sb.Append(BuildLogLine(timestamp, FormatLogLevel(logLevel, eventId), _className, methodName, customer, message));
+        // Written straight into one (reused) builder: no intermediate strings for the date, time and parts.
+        var sb = StringBuilderCache.Acquire();
+        AppendLogLine(sb, timestamp, FormatLogLevel(logLevel, eventId), _className, methodName, customer, message);
 
-        if (maskedKeyNames.Count > 0)
-            sb.Append($" [Masked: {string.Join(", ", maskedKeyNames)}]");
+        if (maskedKeyNames is { Count: > 0 })
+            AppendJoined(sb.Append(" [Masked: "), ", ", maskedKeyNames).Append(']');
 
-        if (exception is not null)
-            sb.Append($" | Exception: {FormatException(config, exception)}");
+        if (formattedException is not null)
+            sb.Append(" | Exception: ").Append(formattedException);
 
         if (scopes is { Count: > 0 })
-            sb.Append($" | Scopes: {string.Join(" > ", scopes)}");
+            AppendJoined(sb.Append(" | Scopes: "), " > ", scopes);
 
-        return sb.ToString();
+        return StringBuilderCache.GetStringAndRelease(sb);
+    }
+
+    private static StringBuilder AppendJoined(StringBuilder sb, string separator, List<string> values)
+    {
+        for (var i = 0; i < values.Count; i++)
+        {
+            if (i > 0)
+                sb.Append(separator);
+            sb.Append(values[i]);
+        }
+
+        return sb;
     }
 
     private string BuildJsonLogLine(
@@ -556,32 +629,208 @@ internal sealed class TjiddeLogger : ILogger
         string? methodName,
         string? customer,
         string message,
-        Exception? exception,
+        string? formattedException,
         List<string>? scopes,
-        List<string> maskedKeyNames,
+        List<string>? maskedKeyNames,
         List<KeyValuePair<string, object?>>? properties)
+    {
+        // Each property value is serialized on its own first, so a value that cannot be serialized only affects itself.
+        object?[]? values = null;
+        if (properties is { Count: > 0 })
+        {
+            values = new object?[properties.Count];
+            for (var i = 0; i < values.Length; i++)
+                values[i] = ToSerializableValue(config, properties[i].Value);
+        }
+
+        var line = new JsonLine(
+            timestamp.ToString("O"), message, FormatLogLevel(logLevel, eventId), _categoryName, _className, eventId,
+            customer, methodName, scopes is { Count: > 0 } ? scopes : null, maskedKeyNames is { Count: > 0 } ? maskedKeyNames : null,
+            formattedException, properties, values);
+
+        try
+        {
+            return WriteJsonLine(line);
+        }
+        catch (Exception)
+        {
+            // The direct writer failed (for example a value nested too deeply): serialize as before, which either
+            // produces the same line or fails the same way.
+            return SerializeJsonLine(line);
+        }
+    }
+
+    /// <summary>The parts of a JSON line; <c>Values</c> holds the serializable value of each property.</summary>
+    private readonly record struct JsonLine(
+        string Timestamp,
+        string Message,
+        string Level,
+        string Category,
+        string ClassName,
+        EventId EventId,
+        string? Customer,
+        string? Method,
+        List<string>? Scopes,
+        List<string>? MaskedFields,
+        string? Exception,
+        List<KeyValuePair<string, object?>>? Properties,
+        object?[]? Values);
+
+    private static readonly JsonWriterOptions JsonLineWriterOptions = new()
+    {
+        // As JsonSerializer writes with JsonOptions: default encoder, not indented, same maximum depth.
+        Encoder = JsonOptions.Encoder,
+        Indented = JsonOptions.WriteIndented,
+        MaxDepth = JsonOptions.MaxDepth
+    };
+
+    [ThreadStatic]
+    private static ArrayBufferWriter<byte>? _cachedJsonBuffer;
+
+    /// <summary>
+    /// Writes the line with a <see cref="Utf8JsonWriter"/>: the same JSON as <see cref="SerializeJsonLine"/>,
+    /// without building dictionaries and without the serializer's per-value type lookups.
+    /// </summary>
+    private static string WriteJsonLine(in JsonLine line)
+    {
+        // Reused per thread; nothing in here calls user code, so a nested log call cannot reach it while in use.
+        var buffer = _cachedJsonBuffer ?? new ArrayBufferWriter<byte>(512);
+        _cachedJsonBuffer = null;
+        buffer.Clear();
+
+        try
+        {
+            using (var writer = new Utf8JsonWriter(buffer, JsonLineWriterOptions))
+            {
+                writer.WriteStartObject();
+                writer.WriteString("@timestamp", line.Timestamp);
+                writer.WriteString("message", line.Message);
+                writer.WriteString("level", line.Level);
+                writer.WriteString("category", line.Category);
+                writer.WriteString("class", line.ClassName);
+                writer.WriteNumber("eventId", line.EventId.Id);
+                writer.WriteString("eventName", line.EventId.Name);
+                writer.WriteString("customer", line.Customer);
+                writer.WriteString("method", line.Method);
+                WriteStringArray(writer, "scopes", line.Scopes);
+                WriteStringArray(writer, "maskedFields", line.MaskedFields);
+                writer.WriteString("exception", line.Exception);
+
+                if (line.Properties is { Count: > 0 } properties)
+                {
+                    writer.WriteStartObject("properties");
+                    for (var i = 0; i < properties.Count; i++)
+                    {
+                        // A repeated name keeps its first position and its last value, as the dictionary did.
+                        var key = properties[i].Key;
+                        if (IndexOfKey(properties, key, 0, i) >= 0)
+                            continue;
+
+                        var last = i;
+                        for (var j = i + 1; j < properties.Count; j++)
+                        {
+                            if (string.Equals(properties[j].Key, key, StringComparison.Ordinal))
+                                last = j;
+                        }
+
+                        writer.WritePropertyName(key);
+                        WriteValue(writer, line.Values![last]);
+                    }
+
+                    writer.WriteEndObject();
+                }
+
+                writer.WriteEndObject();
+            }
+
+            return Encoding.UTF8.GetString(buffer.WrittenSpan);
+        }
+        finally
+        {
+            if (buffer.Capacity <= 16 * 1024)
+                _cachedJsonBuffer = buffer;
+        }
+    }
+
+    private static int IndexOfKey(List<KeyValuePair<string, object?>> properties, string key, int start, int end)
+    {
+        for (var i = start; i < end; i++)
+        {
+            if (string.Equals(properties[i].Key, key, StringComparison.Ordinal))
+                return i;
+        }
+
+        return -1;
+    }
+
+    private static void WriteStringArray(Utf8JsonWriter writer, string name, List<string>? values)
+    {
+        if (values is null)
+        {
+            writer.WriteNull(name);
+            return;
+        }
+
+        writer.WriteStartArray(name);
+        foreach (var value in values)
+            writer.WriteStringValue(value);
+        writer.WriteEndArray();
+    }
+
+    /// <summary>Writes a value produced by <see cref="ToSerializableValue"/>.</summary>
+    private static void WriteValue(Utf8JsonWriter writer, object? value)
+    {
+        switch (value)
+        {
+            case null:
+                writer.WriteNullValue();
+                break;
+            case JsonElement element:
+                element.WriteTo(writer);
+                break;
+            case string text:
+                writer.WriteStringValue(text);
+                break;
+            case int number:
+                writer.WriteNumberValue(number);
+                break;
+            case long number:
+                writer.WriteNumberValue(number);
+                break;
+            case bool flag:
+                writer.WriteBooleanValue(flag);
+                break;
+            default:
+                // Not produced by ToSerializableValue; written by the serializer, as before.
+                JsonSerializer.Serialize(writer, value, value.GetType(), JsonOptions);
+                break;
+        }
+    }
+
+    /// <summary>The original way to write the line: dictionaries serialized by <see cref="JsonSerializer"/>.</summary>
+    private static string SerializeJsonLine(in JsonLine line)
     {
         var payload = new Dictionary<string, object?>
         {
-            ["@timestamp"] = timestamp.ToString("O"),
-            ["message"] = message,
-            ["level"] = FormatLogLevel(logLevel, eventId),
-            ["category"] = _categoryName,
-            ["class"] = _className,
-            ["eventId"] = eventId.Id,
-            ["eventName"] = eventId.Name,
-            ["customer"] = customer,
-            ["method"] = methodName,
-            ["scopes"] = scopes is { Count: > 0 } ? scopes : null,
-            ["maskedFields"] = maskedKeyNames.Count > 0 ? maskedKeyNames : null,
-            ["exception"] = exception is null ? null : FormatException(config, exception)
+            ["@timestamp"] = line.Timestamp,
+            ["message"] = line.Message,
+            ["level"] = line.Level,
+            ["category"] = line.Category,
+            ["class"] = line.ClassName,
+            ["eventId"] = line.EventId.Id,
+            ["eventName"] = line.EventId.Name,
+            ["customer"] = line.Customer,
+            ["method"] = line.Method,
+            ["scopes"] = line.Scopes,
+            ["maskedFields"] = line.MaskedFields,
+            ["exception"] = line.Exception
         };
 
-        if (properties is { Count: > 0 })
+        if (line.Properties is { Count: > 0 } properties)
         {
             var propertyMap = new Dictionary<string, object?>();
-            foreach (var kvp in properties)
-                propertyMap[kvp.Key] = ToSerializableValue(config, kvp.Value);
+            for (var i = 0; i < properties.Count; i++)
+                propertyMap[properties[i].Key] = line.Values![i];
             payload["properties"] = propertyMap;
         }
 
@@ -593,10 +842,18 @@ internal sealed class TjiddeLogger : ILogger
     /// throwing getter, too deep) only affects itself: it falls back to <c>ToString()</c>, or to
     /// <c>[unserializable: TypeName]</c> when that throws too.
     /// </summary>
-    private object? ToSerializableValue(TjiddeLoggerConfiguration config, object? value)
+    private static object? ToSerializableValue(TjiddeLoggerConfiguration config, object? value)
     {
-        if (value is null)
-            return null;
+        // Values that serialize to themselves are written directly, which gives the same JSON as their element.
+        // Strings with surrogates go through the serializer, whose round trip may change unpaired surrogates.
+        switch (value)
+        {
+            case null:
+                return null;
+            case string text when !ContainsSurrogate(text):
+            case int or long or bool:
+                return value;
+        }
 
         try
         {
@@ -609,7 +866,27 @@ internal sealed class TjiddeLogger : ILogger
         }
     }
 
-    private static string BuildLogLine(
+    private static bool ContainsSurrogate(string text)
+    {
+#if NET8_0_OR_GREATER
+        return text.AsSpan().IndexOfAnyInRange('\uD800', '\uDFFF') >= 0;
+#else
+        foreach (var c in text)
+        {
+            if (char.IsSurrogate(c))
+                return true;
+        }
+
+        return false;
+#endif
+    }
+
+    /// <summary>
+    /// Appends <c>{date}: {time}: [{level}] Class=>{className}[ Method=>{method}]: [Client=>{customer}: ]{message}</c>.
+    /// The date and time are formatted with the current culture, like <see cref="DateTimeOffset.ToString(string)"/>.
+    /// </summary>
+    private static void AppendLogLine(
+        StringBuilder sb,
         DateTimeOffset timestamp,
         string level,
         string className,
@@ -617,12 +894,23 @@ internal sealed class TjiddeLogger : ILogger
         string? customer,
         string message)
     {
-        var date = timestamp.ToString("yyyy-MM-dd");
-        var time = timestamp.ToString("HH:mm:ss");
-        var method = string.IsNullOrWhiteSpace(methodName) ? string.Empty : $" Method=>{methodName}";
-        var customerPart = string.IsNullOrWhiteSpace(customer) ? string.Empty : $"Client=>{customer}: ";
+        sb.Append(timestamp.ToString("yyyy-MM-dd", CultureInfo.CurrentCulture))
+            .Append(": ")
+            .Append(timestamp.ToString("HH:mm:ss", CultureInfo.CurrentCulture))
+            .Append(": [")
+            .Append(level)
+            .Append("] Class=>")
+            .Append(className);
 
-        return $"{date}: {time}: [{level}] Class=>{className}{method}: {customerPart}{message}";
+        if (!string.IsNullOrWhiteSpace(methodName))
+            sb.Append(" Method=>").Append(methodName);
+
+        sb.Append(": ");
+
+        if (!string.IsNullOrWhiteSpace(customer))
+            sb.Append("Client=>").Append(customer).Append(": ");
+
+        sb.Append(message);
     }
 
     private static string FormatLogLevel(LogLevel logLevel, EventId eventId) => logLevel switch
@@ -637,27 +925,83 @@ internal sealed class TjiddeLogger : ILogger
         _ => "???"
     };
 
-    private string? ResolveMethodName(TjiddeLoggerConfiguration config)
-        => ExtractMethodFromScope(config)
-           ?? (config.Options.ResolveMethodNameFromStackTrace ? ExtractMethodFromStack() : null);
-
-    private string? ExtractMethodFromScope(TjiddeLoggerConfiguration config)
+    /// <summary>
+    /// Reads the active scopes once: the method name from the innermost <c>MethodName</c> scope value, and the scope
+    /// texts for the output (masked, without <c>MethodName</c>). Scopes is <see langword="null"/> when no scope adds text.
+    /// </summary>
+    private static (string? MethodName, List<string>? Scopes) ReadScopes(TjiddeLoggerConfiguration config, IExternalScopeProvider scopeProvider)
     {
-        if (!config.Options.IncludeScopes || _scopeProvider is null)
-            return null;
+        // Reused per thread so a call without scopes allocates nothing; a nested log call (from a scope value's
+        // ToString) finds the cache empty and uses its own reader.
+        var reader = ScopeReader.Cached ?? new ScopeReader();
+        ScopeReader.Cached = null;
 
-        string? methodName = null;
-        _scopeProvider.ForEachScope((scope, _) =>
+        reader.Config = config;
+        try
         {
-            if (scope is not IEnumerable<KeyValuePair<string, object?>> kvps) return;
-            foreach (var kvp in kvps)
-            {
-                if (kvp.Key.Equals("MethodName", StringComparison.OrdinalIgnoreCase) && kvp.Value is string m)
-                    methodName = m;
-            }
-        }, (object?)null);
+            scopeProvider.ForEachScope(static (scope, r) => r.Read(scope), reader);
+            return (reader.MethodName, reader.Scopes);
+        }
+        finally
+        {
+            reader.Reset();
+            ScopeReader.Cached = reader;
+        }
+    }
 
-        return methodName;
+    private sealed class ScopeReader
+    {
+        [ThreadStatic]
+        public static ScopeReader? Cached;
+
+        public TjiddeLoggerConfiguration Config = null!;
+        public string? MethodName;
+        public List<string>? Scopes;
+
+        public void Reset()
+        {
+            Config = null!;
+            MethodName = null;
+            Scopes = null;
+        }
+
+        public void Read(object? scope)
+        {
+            // The method name: an enumeration that throws here fails the entry (it is not caught), as before.
+            if (scope is IEnumerable<KeyValuePair<string, object?>> methodScope)
+            {
+                foreach (var kvp in methodScope)
+                {
+                    if (kvp.Key.Equals("MethodName", StringComparison.OrdinalIgnoreCase) && kvp.Value is string m)
+                        MethodName = m;
+                }
+            }
+
+            // The scope text: a scope whose enumeration throws is skipped instead of failing the whole entry.
+            try
+            {
+                switch (scope)
+                {
+                    case string s when !string.IsNullOrWhiteSpace(s):
+                        (Scopes ??= []).Add(Config.Options.EnableSensitiveDataMasking ? Config.Masker.MaskMessage(s) : s);
+                        break;
+                    case IEnumerable<KeyValuePair<string, object?>> kvps:
+                    {
+                        foreach (var kvp in kvps)
+                        {
+                            if (!kvp.Key.Equals("MethodName", StringComparison.OrdinalIgnoreCase))
+                                (Scopes ??= []).Add(FormatScopeProperty(Config, kvp.Key, kvp.Value));
+                        }
+
+                        break;
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                (Scopes ??= []).Add($"[unserializable scope: {scope?.GetType().FullName}]");
+            }
+        }
     }
 
     private static string? ExtractMethodFromStack()
@@ -691,7 +1035,7 @@ internal sealed class TjiddeLogger : ILogger
         return null;
     }
 
-    private string FormatScopeProperty(TjiddeLoggerConfiguration config, string key, object? value)
+    private static string FormatScopeProperty(TjiddeLoggerConfiguration config, string key, object? value)
     {
         var raw = SafeToString(value) ?? string.Empty;
         if (!config.Options.EnableSensitiveDataMasking)
@@ -701,35 +1045,6 @@ internal sealed class TjiddeLogger : ILogger
             ? config.Masker.MaskValue(key, raw)
             : config.Masker.MaskMessage(raw);
         return $"{key}={text}";
-    }
-
-    private List<string> CollectScopes(TjiddeLoggerConfiguration config)
-    {
-        var scopes = new List<string>();
-        _scopeProvider?.ForEachScope((scope, list) =>
-        {
-            try
-            {
-                switch (scope)
-                {
-                    case string s when !string.IsNullOrWhiteSpace(s):
-                        list.Add(config.Options.EnableSensitiveDataMasking ? config.Masker.MaskMessage(s) : s);
-                        break;
-                    case IEnumerable<KeyValuePair<string, object?>> kvps:
-                    {
-                        list.AddRange(from kvp in kvps where !kvp.Key.Equals("MethodName", StringComparison.OrdinalIgnoreCase) select FormatScopeProperty(config, kvp.Key, kvp.Value));
-
-                        break;
-                    }
-                }
-            }
-            catch (Exception)
-            {
-                // A scope whose enumeration throws is skipped instead of failing the whole entry.
-                list.Add($"[unserializable scope: {scope?.GetType().FullName}]");
-            }
-        }, scopes);
-        return scopes;
     }
 
     private static ConsoleColor GetColor(LogLevel logLevel, EventId eventId) => logLevel switch

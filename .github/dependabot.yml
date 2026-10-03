@@ -1,14 +1,14 @@
 version: 2
 
 updates:
+  # Library and tests.
   - package-ecosystem: "nuget"
-    directory: "/"
+    directories:
+      - "/src/*"
+      - "/tests/*"
     schedule:
       interval: "weekly"
     groups:
-      microsoft-extensions:
-        patterns:
-          - "Microsoft.Extensions.*"
       test-packages:
         patterns:
           - "xunit*"
@@ -17,11 +17,11 @@ updates:
     ignore:
       # The library (and the test project) reference Microsoft.Extensions.* with one major per
       # target framework on purpose: 7.0.x for net7.0, 8.0.x for net8.0, 9.0.x for net9.0 and
-      # 10.0.x for net10.0. A higher major does not support the older TFM (or would force
-      # consumers on that TFM onto a newer Microsoft.Extensions line), so only allow
-      # minor/patch updates within each major. Raise majors by hand when adding a new TFM.
+      # 10.0.x for net10.0, with deliberately low minimum versions in the library. Dependabot
+      # takes the highest version in a file as the current one and rewrites every occurrence,
+      # which collapses the per-TFM ItemGroups, so a semver-major ignore is not enough.
+      # The per-TFM versions are updated by hand.
       - dependency-name: "Microsoft.Extensions.*"
-        update-types: ["version-update:semver-major"]
       # net7.0 in the test project is pinned to the last releases that still support it:
       # Microsoft.NET.Test.Sdk 17.13.0 (17.14+ requires net8.0) and xunit.runner.visualstudio
       # 3.0.2 (3.1+ requires net8.0). The net8.0+ references are already on newer majors, so
@@ -34,6 +34,21 @@ updates:
         versions: [">= 3.1.0, < 4.0.0"]
       - dependency-name: "xunit.runner.visualstudio"
         update-types: ["version-update:semver-major"]
+
+  # Samples and benchmarks: single TFM (net10.0), so all packages can follow the latest release.
+  - package-ecosystem: "nuget"
+    directories:
+      - "/samples/*"
+      - "/benchmarks/*"
+    schedule:
+      interval: "weekly"
+    groups:
+      microsoft-extensions:
+        patterns:
+          - "Microsoft.Extensions.*"
+      avalonia:
+        patterns:
+          - "Avalonia*"
 
   - package-ecosystem: "github-actions"
     directory: "/"

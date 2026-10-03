@@ -1,0 +1,86 @@
+#nullable enable
+static readonly Tjidde.Logging.Extensions.MetricsLoggerExtensions.Metrics -> Microsoft.Extensions.Logging.LogLevel
+static Tjidde.Logging.Context.CustomerContext.Clear() -> void
+static Tjidde.Logging.Context.CustomerContext.Current.get -> string?
+static Tjidde.Logging.Context.CustomerContext.Set(string? customerIdentifier) -> void
+static Tjidde.Logging.Extensions.MethodScopeLoggerExtensions.BeginMethodScope(this Microsoft.Extensions.Logging.ILogger! logger, string! methodName = "") -> System.IDisposable?
+static Tjidde.Logging.Extensions.MetricsLoggerExtensions.LogMetrics(this Microsoft.Extensions.Logging.ILogger! logger, Microsoft.Extensions.Logging.EventId eventId, string! message, params object?[]! args) -> void
+static Tjidde.Logging.Extensions.MetricsLoggerExtensions.LogMetrics(this Microsoft.Extensions.Logging.ILogger! logger, string! message, params object?[]! args) -> void
+static Tjidde.Logging.Extensions.MetricsLoggerExtensions.LogMetrics(this Microsoft.Extensions.Logging.ILogger! logger, System.Exception? exception, string! message, params object?[]! args) -> void
+static Tjidde.Logging.Extensions.TjiddeLoggingBuilderExtensions.AddTjiddeLogger(this Microsoft.Extensions.Logging.ILoggingBuilder! builder) -> Microsoft.Extensions.Logging.ILoggingBuilder!
+static Tjidde.Logging.Extensions.TjiddeLoggingBuilderExtensions.AddTjiddeLogger(this Microsoft.Extensions.Logging.ILoggingBuilder! builder, Microsoft.Extensions.Configuration.IConfiguration! configuration, string! sectionPath = "TjiddeLogger") -> Microsoft.Extensions.Logging.ILoggingBuilder!
+static Tjidde.Logging.Extensions.TjiddeLoggingBuilderExtensions.AddTjiddeLogger(this Microsoft.Extensions.Logging.ILoggingBuilder! builder, Microsoft.Extensions.Configuration.IConfigurationSection! configurationSection) -> Microsoft.Extensions.Logging.ILoggingBuilder!
+static Tjidde.Logging.Extensions.TjiddeLoggingBuilderExtensions.AddTjiddeLogger(this Microsoft.Extensions.Logging.ILoggingBuilder! builder, System.Action<Tjidde.Logging.Options.TjiddeLoggerOptions!>! configure) -> Microsoft.Extensions.Logging.ILoggingBuilder!
+static Tjidde.Logging.Extensions.TjiddeLoggingBuilderExtensions.UseTjiddeJsonFormat(this Microsoft.Extensions.Logging.ILoggingBuilder! builder) -> Microsoft.Extensions.Logging.ILoggingBuilder!
+static Tjidde.Logging.Extensions.TjiddeLoggingBuilderExtensions.UseTjiddeTextFormat(this Microsoft.Extensions.Logging.ILoggingBuilder! builder) -> Microsoft.Extensions.Logging.ILoggingBuilder!
+static Tjidde.Logging.Masking.MaskedKeysContext.Add(params string![]! keys) -> void
+static Tjidde.Logging.Masking.MaskedKeysContext.Clear() -> void
+static Tjidde.Logging.Masking.MaskedKeysContext.GetKeys() -> System.Collections.Generic.IReadOnlyCollection<string!>!
+static Tjidde.Logging.Masking.MaskedKeysContext.Remove(params string![]! keys) -> void
+Tjidde.Logging.Context.AsyncLocalCustomerContextAccessor
+Tjidde.Logging.Context.AsyncLocalCustomerContextAccessor.AsyncLocalCustomerContextAccessor() -> void
+Tjidde.Logging.Context.AsyncLocalCustomerContextAccessor.GetCustomerContext() -> string?
+Tjidde.Logging.Context.CustomerContext
+Tjidde.Logging.Context.ICustomerContextAccessor
+Tjidde.Logging.Context.ICustomerContextAccessor.GetCustomerContext() -> string?
+Tjidde.Logging.Extensions.MethodScopeLoggerExtensions
+Tjidde.Logging.Extensions.MetricsLoggerExtensions
+Tjidde.Logging.Extensions.TjiddeLoggingBuilderExtensions
+Tjidde.Logging.Formatting.ExceptionFormatter
+Tjidde.Logging.Formatting.ExceptionFormatter.ExceptionFormatter(bool includeStackTrace = true, bool includeInnerExceptions = true) -> void
+Tjidde.Logging.Formatting.ExceptionFormatter.Format(System.Exception! exception) -> string!
+Tjidde.Logging.Formatting.IExceptionFormatter
+Tjidde.Logging.Formatting.IExceptionFormatter.Format(System.Exception! exception) -> string!
+Tjidde.Logging.Logging.TjiddeLoggerProvider
+Tjidde.Logging.Logging.TjiddeLoggerProvider.CreateLogger(string! categoryName) -> Microsoft.Extensions.Logging.ILogger!
+Tjidde.Logging.Logging.TjiddeLoggerProvider.Dispose() -> void
+Tjidde.Logging.Logging.TjiddeLoggerProvider.SetScopeProvider(Microsoft.Extensions.Logging.IExternalScopeProvider! scopeProvider) -> void
+Tjidde.Logging.Logging.TjiddeLoggerProvider.TjiddeLoggerProvider(Microsoft.Extensions.Options.IOptionsMonitor<Tjidde.Logging.Options.TjiddeLoggerOptions!>! optionsMonitor, Tjidde.Logging.Context.ICustomerContextAccessor! customerContextAccessor, Tjidde.Logging.Masking.IMaskedKeysAccessor! maskedKeysAccessor) -> void
+Tjidde.Logging.Masking.GlobalMaskedKeysAccessor
+Tjidde.Logging.Masking.GlobalMaskedKeysAccessor.GetKeys() -> System.Collections.Generic.IReadOnlyCollection<string!>!
+Tjidde.Logging.Masking.GlobalMaskedKeysAccessor.GlobalMaskedKeysAccessor() -> void
+Tjidde.Logging.Masking.IMaskedKeysAccessor
+Tjidde.Logging.Masking.IMaskedKeysAccessor.GetKeys() -> System.Collections.Generic.IReadOnlyCollection<string!>!
+Tjidde.Logging.Masking.ISensitiveDataMasker
+Tjidde.Logging.Masking.ISensitiveDataMasker.IsSensitiveKey(string! key) -> bool
+Tjidde.Logging.Masking.ISensitiveDataMasker.MaskDictionary(System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string!, object?>>! properties) -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>!
+Tjidde.Logging.Masking.ISensitiveDataMasker.MaskMessage(string! message) -> string!
+Tjidde.Logging.Masking.ISensitiveDataMasker.MaskValue(string! key, string! value) -> string!
+Tjidde.Logging.Masking.MaskedKeysContext
+Tjidde.Logging.Masking.SensitiveDataMasker
+Tjidde.Logging.Masking.SensitiveDataMasker.IsSensitiveKey(string! key) -> bool
+Tjidde.Logging.Masking.SensitiveDataMasker.MaskDictionary(System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string!, object?>>! properties) -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>!
+Tjidde.Logging.Masking.SensitiveDataMasker.MaskMessage(string! message) -> string!
+Tjidde.Logging.Masking.SensitiveDataMasker.MaskValue(string! key, string! value) -> string!
+Tjidde.Logging.Masking.SensitiveDataMasker.SensitiveDataMasker(string! placeholder = "[REDACTED]", System.Collections.Generic.IEnumerable<string!>? additionalKeys = null, System.Collections.Generic.IEnumerable<string!>? dynamicKeys = null) -> void
+Tjidde.Logging.Options.TjiddeLoggerOptions
+Tjidde.Logging.Options.TjiddeLoggerOptions.AdditionalSensitiveKeys.get -> System.Collections.Generic.IList<string!>!
+Tjidde.Logging.Options.TjiddeLoggerOptions.AdditionalSensitiveKeys.set -> void
+Tjidde.Logging.Options.TjiddeLoggerOptions.CategoryMinimumLevels.get -> System.Collections.Generic.IDictionary<string!, Microsoft.Extensions.Logging.LogLevel>!
+Tjidde.Logging.Options.TjiddeLoggerOptions.CategoryMinimumLevels.set -> void
+Tjidde.Logging.Options.TjiddeLoggerOptions.EnableOpenTelemetryExport.get -> bool
+Tjidde.Logging.Options.TjiddeLoggerOptions.EnableOpenTelemetryExport.set -> void
+Tjidde.Logging.Options.TjiddeLoggerOptions.EnableSensitiveDataMasking.get -> bool
+Tjidde.Logging.Options.TjiddeLoggerOptions.EnableSensitiveDataMasking.set -> void
+Tjidde.Logging.Options.TjiddeLoggerOptions.IncludeInnerExceptions.get -> bool
+Tjidde.Logging.Options.TjiddeLoggerOptions.IncludeInnerExceptions.set -> void
+Tjidde.Logging.Options.TjiddeLoggerOptions.IncludeScopes.get -> bool
+Tjidde.Logging.Options.TjiddeLoggerOptions.IncludeScopes.set -> void
+Tjidde.Logging.Options.TjiddeLoggerOptions.IncludeStackTrace.get -> bool
+Tjidde.Logging.Options.TjiddeLoggerOptions.IncludeStackTrace.set -> void
+Tjidde.Logging.Options.TjiddeLoggerOptions.MaskPlaceholder.get -> string!
+Tjidde.Logging.Options.TjiddeLoggerOptions.MaskPlaceholder.set -> void
+Tjidde.Logging.Options.TjiddeLoggerOptions.MinimumLevel.get -> Microsoft.Extensions.Logging.LogLevel
+Tjidde.Logging.Options.TjiddeLoggerOptions.MinimumLevel.set -> void
+Tjidde.Logging.Options.TjiddeLoggerOptions.OpenTelemetryActivitySourceName.get -> string!
+Tjidde.Logging.Options.TjiddeLoggerOptions.OpenTelemetryActivitySourceName.set -> void
+Tjidde.Logging.Options.TjiddeLoggerOptions.OpenTelemetryCreateFallbackActivity.get -> bool
+Tjidde.Logging.Options.TjiddeLoggerOptions.OpenTelemetryCreateFallbackActivity.set -> void
+Tjidde.Logging.Options.TjiddeLoggerOptions.OutputFormat.get -> Tjidde.Logging.Options.TjiddeLogOutputFormat
+Tjidde.Logging.Options.TjiddeLoggerOptions.OutputFormat.set -> void
+Tjidde.Logging.Options.TjiddeLoggerOptions.ResolveMethodNameFromStackTrace.get -> bool
+Tjidde.Logging.Options.TjiddeLoggerOptions.ResolveMethodNameFromStackTrace.set -> void
+Tjidde.Logging.Options.TjiddeLoggerOptions.TjiddeLoggerOptions() -> void
+Tjidde.Logging.Options.TjiddeLogOutputFormat
+Tjidde.Logging.Options.TjiddeLogOutputFormat.Json = 1 -> Tjidde.Logging.Options.TjiddeLogOutputFormat
+Tjidde.Logging.Options.TjiddeLogOutputFormat.Text = 0 -> Tjidde.Logging.Options.TjiddeLogOutputFormat

@@ -12,8 +12,9 @@
 8. [Exception Formatting](#exception-formatting)
 9. [Scopes](#scopes)
 10. [Metrics Entries](#metrics-entries)
-11. [CI/CD (GitHub Actions)](#cicd-github-actions)
-12. [Future Work](#future-work)
+11. [Sinks](#sinks)
+12. [CI/CD (GitHub Actions)](#cicd-github-actions)
+13. [Future Work](#future-work)
 
 ---
 
@@ -42,7 +43,7 @@ dotnet add package Tjidde.Logging
 Or add it manually to your `.csproj`:
 
 ```xml
-<PackageReference Include="Tjidde.Logging" Version="1.0.1" />
+<PackageReference Include="Tjidde.Logging" Version="*" />
 ```
 
 ---
@@ -110,15 +111,15 @@ public class OrderService
 Every log entry is written as a **single line** in the following format:
 
 ```
-YYYY-MM-DD: HH:mm:ss: [LEVEL] CS=>ClassName Method=>MethodName: Client=>Customer: Message [Masked: key1, key2] | Exception: [...] | Scopes: scope1 > scope2
+YYYY-MM-DD: HH:mm:ss: [LEVEL] Class=>ClassName Method=>MethodName: Client=>Customer: Message [Masked: key1, key2] | Exception: [...] | Scopes: scope1 > scope2
 ```
 
 ### Example output
 
 ```
-2026-03-18: 09:15:41: [INFORMATION] CS=>OrderService Method=>PlaceOrder: Client=>AcmeCorp: Order 42 placed successfully
-2026-03-18: 09:15:42: [ERROR] CS=>PaymentService Method=>ProcessPayment: Client=>AcmeCorp: Payment failed | Exception: [System.InvalidOperationException: Gateway timeout]
-2026-03-18: 09:15:43: [WARNING] CS=>AuthService Method=>Login: Login with password [REDACTED]
+2026-03-18: 09:15:41: [INFORMATION] Class=>OrderService Method=>PlaceOrder: Client=>AcmeCorp: Order 42 placed successfully
+2026-03-18: 09:15:42: [ERROR] Class=>PaymentService Method=>ProcessPayment: Client=>AcmeCorp: Payment failed | Exception: [System.InvalidOperationException: Gateway timeout]
+2026-03-18: 09:15:43: [WARNING] Class=>AuthService Method=>Login: Login with password [REDACTED]
 ```
 
 ### Log levels
@@ -278,6 +279,7 @@ builder.Logging.AddTjiddeLogger(options =>
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `OutputFormat` | `TjiddeLogOutputFormat` | `Text` | Log rendering mode: `Text` or `Json` (Elasticsearch-friendly JSON line). |
+| `WriteToConsole` | `bool` | `true` | Writes entries to the console. `false` writes only to the registered [sinks](#sinks). |
 | `MinimumLevel` *(obsolete)* | `LogLevel` | `Trace` | Global minimum log level fallback when no category override matches. Use `Logging:Tjidde:LogLevel` instead; removed in 2.0. |
 | `CategoryMinimumLevels` *(obsolete)* | `IDictionary<string, LogLevel>` | `{}` | Category/namespace/class-specific minimum levels. Use `Logging:Tjidde:LogLevel` instead; removed in 2.0. |
 | `EnableOpenTelemetryExport` | `bool` | `false` | Emits each log as an OpenTelemetry event on the current `Activity` (for OTEL pipelines). |
@@ -375,7 +377,7 @@ CustomerContext.Set("AcmeCorp");
 
 // All log entries from this point forward will include "AcmeCorp:" in the output.
 _logger.LogInformation("Processing started");
-// → 2026-03-18: 09:00:00: [INFORMATION] MyService: AcmeCorp: Processing started
+// → 2026-03-18: 09:00:00: [INFORMATION] Class=>MyService: Client=>AcmeCorp: Processing started
 ```
 
 ### Clearing the context
@@ -568,7 +570,7 @@ _logger.LogMetrics(new EventId(200), "throughput_rps={Rps}", rps);
 ### Example output
 
 ```
-2026-03-18: 11:00:00: [METRICS] OrderService ProcessOrder: AcmeCorp: requests_total=42
+2026-03-18: 11:00:00: [METRICS] Class=>OrderService Method=>ProcessOrder: Client=>AcmeCorp: requests_total=42
 ```
 
 The `[METRICS]` label is printed in **Magenta** in the console for easy visual distinction.
@@ -580,6 +582,63 @@ Tjidde.Logging's own (obsolete) `MinimumLevel` and `CategoryMinimumLevels` never
 ### The obsolete `Metrics` log level
 
 Earlier versions logged metrics at the custom level `MetricsLoggerExtensions.Metrics` (`(LogLevel)10`). That value is not a valid `LogLevel`: other providers reject it, and the Microsoft console formatters throw an `ArgumentOutOfRangeException`, so `LogMetrics` crashed as soon as `AddConsole()` was also registered. The field is now marked `[Obsolete]`. Tjidde.Logging still shows `(LogLevel)10` as `[METRICS]`, but use `LogMetrics(...)` (or `MetricsEventId`) instead.
+
+---
+
+## Sinks
+
+The console is the default destination. To send entries somewhere else as well (a UI, a file, a test assertion), implement `ILogSink` (namespace `Tjidde.Logging.Sinks`) or use the built-in `InMemoryLogSink`.
+
+### Registering sinks
+
+```csharp
+builder.Logging
+    .AddTjiddeLogger()
+    .AddTjiddeInMemorySink(capacity: 500)   // built-in, inject InMemoryLogSink to read it
+    .AddTjiddeSink<MyFileSink>();           // created by the container, also injectable as MyFileSink
+
+builder.Logging.AddTjiddeSink(new MySink()); // an existing instance
+builder.Services.AddSingleton<ILogSink, MyOtherSink>(); // plain DI works too
+```
+
+### Writing a sink
+
+```csharp
+public sealed class MyFileSink : ILogSink
+{
+    public void Write(TjiddeLogEntry entry)
+    {
+        // entry.RenderedLine is exactly what the console gets (text or JSON, see entry.OutputFormat)
+    }
+}
+```
+
+`TjiddeLogEntry` is immutable and contains only masked data:
+
+| Property | Description |
+|---|---|
+| `Timestamp` | `DateTimeOffset`; UTC or local, following `UseUtcTimestamp` |
+| `Level` / `EventId` | Level and event ID; `IsMetrics` is `true` for `LogMetrics` entries (event `Metrics`) |
+| `Category` / `ClassName` / `MethodName` | Logger category, its last segment, and the method from a `MethodName` scope |
+| `Customer` | The customer context, or `null` |
+| `Message` | The rendered, masked message |
+| `FormattedException` | The formatted, masked exception, or `null` |
+| `RenderedLine` / `OutputFormat` | The complete rendered line and its format |
+
+Rules:
+
+- Sinks are called **synchronously** on the thread that logs, in registration order. `Write` must be fast and thread-safe; queue slow I/O yourself.
+- An exception thrown by a sink is ignored: the log call never throws, and the console and the other sinks still receive the entry.
+- An entry logged from inside `Write` is not sent to the sinks again, so a sink cannot recurse.
+- A sink must not take `ILogger<T>` or `ILoggerFactory` in its constructor (circular dependency).
+
+### InMemoryLogSink
+
+Keeps the newest `Capacity` entries (default 1000) and drops the oldest. `GetSnapshot()` returns a copy, oldest first; `Count`, `Clear()`, and the events `EntryAdded` (on the logging thread) and `Cleared` complete it. All members are thread-safe. The samples in `samples/` use it to show the log in a Blazor, Avalonia and terminal UI.
+
+### Console off
+
+`WriteToConsole = false` writes only to the sinks, for example in a desktop or terminal UI where console output is not wanted. It can be set in `appsettings.json` (`"TjiddeLogger": { "WriteToConsole": false }`) and applies immediately when the options reload.
 
 ---
 
@@ -618,13 +677,25 @@ git push origin v1.0.4
 
 The tag sets the package version: `v1.0.4` publishes `1.0.4`, and pre-releases such as `v1.1.0-beta.1` work too. The `<Version>` in the `.csproj` only applies to local builds. Publishing a version that already exists on nuget.org is skipped instead of failing.
 
+### Public API and package validation
+
+Two checks guard against accidental breaking changes:
+
+- **Public API files.** `Microsoft.CodeAnalysis.PublicApiAnalyzers` compares the public API with two files next to `Tjidde.Logging.csproj`: `PublicAPI.Shipped.txt` (the API of the last release) and `PublicAPI.Unshipped.txt` (everything added since). New public API that is in neither file gives warning RS0016; add it to `PublicAPI.Unshipped.txt` (the RS0016 code fix in the IDE, or `dotnet format analyzers src/Tjidde.Logging/Tjidde.Logging.csproj --diagnostics RS0016`). A listed API that no longer matches, for example after a changed signature or default value, gives RS0017.
+- **Package validation.** `dotnet pack` downloads the version in `<PackageValidationBaselineVersion>` from nuget.org and fails if the new package breaks compatibility with it.
+
+After every release:
+
+1. Move all lines from `PublicAPI.Unshipped.txt` to `PublicAPI.Shipped.txt`. Both files keep `#nullable enable` as their first line, so `PublicAPI.Unshipped.txt` ends up with only that line.
+2. Raise `<PackageValidationBaselineVersion>` in `src/Tjidde.Logging/Tjidde.Logging.csproj` to the version you just released.
+
 ---
 
 ## Future Work
 
 The following improvements and features are planned or considered for future releases:
 
-- **File sink** — Write log output to rolling log files in addition to the console.
+- **File sink** — A built-in `ILogSink` that writes rolling log files.
 - **Redaction audit log** — Optionally emit a separate audit entry listing which fields were redacted, for compliance scenarios.
 - **Custom sensitive key providers** — Allow injecting `ISensitiveKeyProvider` implementations so keys can be loaded from configuration or a secrets store at runtime.
 - **NuGet package signing** — Sign the NuGet package in the pipeline for supply-chain security.

@@ -12,8 +12,9 @@
 8. [Uitzonderingsopmaak](#uitzonderingsopmaak)
 9. [Scopes](#scopes)
 10. [Metrics-regels](#metrics-regels)
-11. [CI/CD (GitHub Actions)](#cicd-github-actions)
-12. [Toekomstige ontwikkelingen](#toekomstige-ontwikkelingen)
+11. [Sinks](#sinks)
+12. [CI/CD (GitHub Actions)](#cicd-github-actions)
+13. [Toekomstige ontwikkelingen](#toekomstige-ontwikkelingen)
 
 ---
 
@@ -42,7 +43,7 @@ dotnet add package Tjidde.Logging
 Of voeg het handmatig toe aan uw `.csproj`:
 
 ```xml
-<PackageReference Include="Tjidde.Logging" Version="1.0.1" />
+<PackageReference Include="Tjidde.Logging" Version="*" />
 ```
 
 ---
@@ -110,15 +111,15 @@ public class OrderService
 Elke logmelding wordt als **één regel** geschreven in het volgende formaat:
 
 ```
-YYYY-MM-DD: HH:mm:ss: [NIVEAU] CS=>KlasseNaam Method=>MethodeNaam: Client=>Klant: Bericht [Masked: sleutel1, sleutel2] | Exception: [...] | Scopes: scope1 > scope2
+YYYY-MM-DD: HH:mm:ss: [NIVEAU] Class=>KlasseNaam Method=>MethodeNaam: Client=>Klant: Bericht [Masked: sleutel1, sleutel2] | Exception: [...] | Scopes: scope1 > scope2
 ```
 
 ### Voorbeelduitvoer
 
 ```
-2026-03-18: 09:15:41: [INFORMATION] CS=>OrderService Method=>PlaceOrder: Client=>AcmeCorp: Bestelling 42 succesvol geplaatst
-2026-03-18: 09:15:42: [ERROR] CS=>PaymentService Method=>ProcessPayment: Client=>AcmeCorp: Betaling mislukt | Exception: [System.InvalidOperationException: Gateway timeout]
-2026-03-18: 09:15:43: [WARNING] CS=>AuthService Method=>Login: Inloggen met password [REDACTED]
+2026-03-18: 09:15:41: [INFORMATION] Class=>OrderService Method=>PlaceOrder: Client=>AcmeCorp: Bestelling 42 succesvol geplaatst
+2026-03-18: 09:15:42: [ERROR] Class=>PaymentService Method=>ProcessPayment: Client=>AcmeCorp: Betaling mislukt | Exception: [System.InvalidOperationException: Gateway timeout]
+2026-03-18: 09:15:43: [WARNING] Class=>AuthService Method=>Login: Inloggen met password [REDACTED]
 ```
 
 ### Logniveaus
@@ -278,6 +279,7 @@ builder.Logging.AddTjiddeLogger(options =>
 | Optie | Type | Standaard | Beschrijving |
 |---|---|---|---|
 | `OutputFormat` | `TjiddeLogOutputFormat` | `Text` | Weergavemodus: `Text` of `Json` (Elasticsearch-vriendelijke JSON-regel). |
+| `WriteToConsole` | `bool` | `true` | Schrijft regels naar de console. `false` schrijft alleen naar de geregistreerde [sinks](#sinks). |
 | `MinimumLevel` *(verouderd)* | `LogLevel` | `Trace` | Globaal minimum logniveau als er geen categorie-override matcht. Gebruik `Logging:Tjidde:LogLevel`; verdwijnt in 2.0. |
 | `CategoryMinimumLevels` *(verouderd)* | `IDictionary<string, LogLevel>` | `{}` | Categorie-/namespace-/klasse-specifieke minimum niveaus. Gebruik `Logging:Tjidde:LogLevel`; verdwijnt in 2.0. |
 | `EnableOpenTelemetryExport` | `bool` | `false` | Stuurt elke logregel als OpenTelemetry-event op de huidige `Activity` (voor OTEL-pipelines). |
@@ -375,7 +377,7 @@ CustomerContext.Set("AcmeCorp");
 
 // Alle logmeldingen vanaf dit punt bevatten "AcmeCorp:" in de uitvoer.
 _logger.LogInformation("Verwerking gestart");
-// → 2026-03-18: 09:00:00: [INFORMATION] MyService: AcmeCorp: Verwerking gestart
+// → 2026-03-18: 09:00:00: [INFORMATION] Class=>MyService: Client=>AcmeCorp: Verwerking gestart
 ```
 
 ### Context wissen
@@ -568,7 +570,7 @@ _logger.LogMetrics(new EventId(200), "throughput_rps={Rps}", rps);
 ### Voorbeelduitvoer
 
 ```
-2026-03-18: 11:00:00: [METRICS] OrderService ProcessOrder: AcmeCorp: requests_total=42
+2026-03-18: 11:00:00: [METRICS] Class=>OrderService Method=>ProcessOrder: Client=>AcmeCorp: requests_total=42
 ```
 
 Het label `[METRICS]` wordt in **Magenta** weergegeven in de console voor eenvoudige visuele herkenning.
@@ -580,6 +582,63 @@ Het eigen (verouderde) `MinimumLevel` en `CategoryMinimumLevels` van Tjidde.Logg
 ### Het verouderde `Metrics`-logniveau
 
 Eerdere versies logden metrics op het aangepaste niveau `MetricsLoggerExtensions.Metrics` (`(LogLevel)10`). Die waarde is geen geldig `LogLevel`: andere providers weigeren haar en de console-formatters van Microsoft gooien een `ArgumentOutOfRangeException`, waardoor `LogMetrics` crashte zodra ook `AddConsole()` geregistreerd was. Het veld is nu gemarkeerd als `[Obsolete]`. Tjidde.Logging toont `(LogLevel)10` nog steeds als `[METRICS]`, maar gebruik in plaats daarvan `LogMetrics(...)` (of `MetricsEventId`).
+
+---
+
+## Sinks
+
+De console is de standaardbestemming. Om regels ook ergens anders heen te sturen (een UI, een bestand, een test), implementeer je `ILogSink` (namespace `Tjidde.Logging.Sinks`) of gebruik je de ingebouwde `InMemoryLogSink`.
+
+### Sinks registreren
+
+```csharp
+builder.Logging
+    .AddTjiddeLogger()
+    .AddTjiddeInMemorySink(capacity: 500)   // ingebouwd, injecteer InMemoryLogSink om te lezen
+    .AddTjiddeSink<MyFileSink>();           // gemaakt door de container, ook injecteerbaar als MyFileSink
+
+builder.Logging.AddTjiddeSink(new MySink()); // een bestaande instantie
+builder.Services.AddSingleton<ILogSink, MyOtherSink>(); // gewone DI werkt ook
+```
+
+### Een sink schrijven
+
+```csharp
+public sealed class MyFileSink : ILogSink
+{
+    public void Write(TjiddeLogEntry entry)
+    {
+        // entry.RenderedLine is precies wat de console krijgt (tekst of JSON, zie entry.OutputFormat)
+    }
+}
+```
+
+`TjiddeLogEntry` is immutable en bevat alleen gemaskeerde gegevens:
+
+| Eigenschap | Beschrijving |
+|---|---|
+| `Timestamp` | `DateTimeOffset`; UTC of lokaal, volgens `UseUtcTimestamp` |
+| `Level` / `EventId` | Niveau en event-ID; `IsMetrics` is `true` voor `LogMetrics`-regels (event `Metrics`) |
+| `Category` / `ClassName` / `MethodName` | Loggercategorie, het laatste deel daarvan, en de methode uit een `MethodName`-scope |
+| `Customer` | De klantcontext, of `null` |
+| `Message` | Het gerenderde, gemaskeerde bericht |
+| `FormattedException` | De opgemaakte, gemaskeerde exception, of `null` |
+| `RenderedLine` / `OutputFormat` | De volledige gerenderde regel en het formaat daarvan |
+
+Regels:
+
+- Sinks worden **synchroon** aangeroepen op de thread die logt, in volgorde van registratie. `Write` moet snel en thread-safe zijn; zet trage I/O zelf in een wachtrij.
+- Een exception uit een sink wordt genegeerd: de logaanroep gooit nooit, en de console en de andere sinks krijgen de regel nog steeds.
+- Een regel die binnen `Write` gelogd wordt, gaat niet opnieuw naar de sinks, dus een sink kan niet recursief worden.
+- Een sink mag geen `ILogger<T>` of `ILoggerFactory` in zijn constructor vragen (circulaire afhankelijkheid).
+
+### InMemoryLogSink
+
+Bewaart de nieuwste `Capacity` regels (standaard 1000) en laat de oudste vallen. `GetSnapshot()` geeft een kopie, oudste eerst; daarnaast zijn er `Count`, `Clear()` en de events `EntryAdded` (op de logthread) en `Cleared`. Alle members zijn thread-safe. De voorbeelden in `samples/` gebruiken hem om de log te tonen in een Blazor-, Avalonia- en terminal-UI.
+
+### Console uitzetten
+
+`WriteToConsole = false` schrijft alleen naar de sinks, bijvoorbeeld in een desktop- of terminal-UI waar console-uitvoer ongewenst is. Het kan in `appsettings.json` (`"TjiddeLogger": { "WriteToConsole": false }`) en geldt direct wanneer de opties herladen.
 
 ---
 
@@ -618,13 +677,25 @@ git push origin v1.0.4
 
 De tag bepaalt de pakketversie: `v1.0.4` publiceert `1.0.4`, en pre-releases zoals `v1.1.0-beta.1` werken ook. De `<Version>` in de `.csproj` geldt alleen voor lokale builds. Een versie die al op nuget.org staat, wordt overgeslagen in plaats van dat de workflow faalt.
 
+### Publieke API en package validation
+
+Twee controles voorkomen onbedoelde breaking changes:
+
+- **Publieke-API-bestanden.** `Microsoft.CodeAnalysis.PublicApiAnalyzers` vergelijkt de publieke API met twee bestanden naast `Tjidde.Logging.csproj`: `PublicAPI.Shipped.txt` (de API van de laatste release) en `PublicAPI.Unshipped.txt` (alles wat daarna is toegevoegd). Nieuwe publieke API die in geen van beide staat, geeft waarschuwing RS0016; voeg die toe aan `PublicAPI.Unshipped.txt` (met de RS0016-codefix in de IDE, of `dotnet format analyzers src/Tjidde.Logging/Tjidde.Logging.csproj --diagnostics RS0016`). Een vermelde API die niet meer klopt, bijvoorbeeld na een gewijzigde signatuur of standaardwaarde, geeft RS0017.
+- **Package validation.** `dotnet pack` haalt de versie uit `<PackageValidationBaselineVersion>` op van nuget.org en faalt als het nieuwe pakket daarmee niet compatibel is.
+
+Na elke release:
+
+1. Verplaats alle regels uit `PublicAPI.Unshipped.txt` naar `PublicAPI.Shipped.txt`. Beide bestanden houden `#nullable enable` als eerste regel, dus in `PublicAPI.Unshipped.txt` blijft alleen die regel over.
+2. Hoog `<PackageValidationBaselineVersion>` in `src/Tjidde.Logging/Tjidde.Logging.csproj` op naar de versie die je net hebt uitgebracht.
+
 ---
 
 ## Toekomstige ontwikkelingen
 
 De volgende verbeteringen en functies zijn gepland of worden overwogen voor toekomstige releases:
 
-- **Bestandssink** — Loguitvoer wegschrijven naar roterende logbestanden naast de console.
+- **Bestandssink** — Een ingebouwde `ILogSink` die naar roterende logbestanden schrijft.
 - **Redactie-auditlog** — Optioneel een aparte auditmelding uitsturen met de lijst van gemaskeerde velden, voor compliancescenario's.
 - **Aangepaste gevoelige-sleutelproviders** — Het injecteren van `ISensitiveKeyProvider`-implementaties toestaan, zodat sleutels tijdens runtime uit configuratie of een secrets store kunnen worden geladen.
 - **NuGet-pakketondertekening** — Het NuGet-pakket ondertekenen in de pipeline voor supply-chain-beveiliging.

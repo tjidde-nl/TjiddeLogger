@@ -205,6 +205,38 @@ public sealed class SensitiveDataMaskerTests
         masker.IsSensitiveKey("SuperSecret42").Should().BeFalse();
     }
 
+    [Theory]
+    [InlineData("Order processed successfully")]
+    [InlineData("Tokens of appreciation")]
+    [InlineData("caf\u00e9 au lait, no keys here")]
+    public void MaskMessage_LeavesTextWithoutSensitiveValuesUnchanged(string message)
+    {
+        _masker.MaskMessage(message).Should().Be(message);
+    }
+
+    [Fact]
+    public void MaskMessage_MasksKeyWrittenWithNonAsciiCaseVariant()
+    {
+        // The Kelvin sign matches "k" case-insensitively, so the quick key check must not skip this text.
+        _masker.MaskMessage("to\u212Aen=abc123").Should().Be("to\u212Aen=[REDACTED]");
+    }
+
+    [Fact]
+    public void MaskMessage_MasksAsciiTextForNonAsciiKey()
+    {
+        var masker = new SensitiveDataMasker(additionalKeys: ["\u212Aeycode"]);
+
+        masker.MaskMessage("keycode=abc123").Should().Be("keycode=[REDACTED]");
+    }
+
+    [Fact]
+    public void MaskMessage_MasksEveryKey_WhenPlaceholderIsNonAscii()
+    {
+        var masker = new SensitiveDataMasker(placeholder: "\u2588\u2588");
+
+        masker.MaskMessage("password=abc token=def").Should().Be("password=\u2588\u2588 token=\u2588\u2588");
+    }
+
     private sealed class FakeMaskedKeysAccessor : IMaskedKeysAccessor
     {
         public IReadOnlyCollection<string> Keys { get; set; } = [];

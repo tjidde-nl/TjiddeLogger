@@ -38,7 +38,7 @@ public sealed class SharedMaskerTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public void ConcurrentLogging_WhileMaskedKeysChange_KeepsMaskingAndNeverThrows(bool useGlobalContext)
+    public async Task ConcurrentLogging_WhileMaskedKeysChange_KeepsMaskingAndNeverThrows(bool useGlobalContext)
     {
         var id = Guid.NewGuid().ToString("N");
         var permanentKey = $"perm-{id}";
@@ -88,16 +88,16 @@ public sealed class SharedMaskerTests
 
                 try
                 {
-                    Task.WaitAll(loggers);
+                    await Task.WhenAll(loggers);
                 }
-                catch (AggregateException ex)
+                catch
                 {
-                    errors.AddRange(ex.InnerExceptions);
+                    errors.AddRange(loggers.Where(task => task.Exception is not null).SelectMany(task => task.Exception!.InnerExceptions));
                 }
                 finally
                 {
                     stop.Cancel();
-                    churn.Wait();
+                    await churn;
                 }
             }
         }

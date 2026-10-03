@@ -13,6 +13,14 @@ public sealed class TjiddeLoggerOptions
     /// </summary>
     public TjiddeLogOutputFormat OutputFormat { get; set; } = TjiddeLogOutputFormat.Text;
 
+    /// <summary>
+    /// Whether entries are written to the console. Set to <see langword="false"/> to write only to the registered
+    /// <see cref="Sinks.ILogSink"/>s (for example in a desktop or terminal UI). A change applies immediately when the
+    /// options reload. OpenTelemetry export is not affected.
+    /// Default: true.
+    /// </summary>
+    public bool WriteToConsole { get; set; } = true;
+
     internal const string MinimumLevelObsoleteMessage =
         "Use the standard Microsoft.Extensions.Logging filters instead: Logging:Tjidde:LogLevel in appsettings.json " +
         "(or AddFilter<TjiddeLoggerProvider>(...) in code). This option will be removed in 2.0.";

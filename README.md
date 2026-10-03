@@ -1,5 +1,8 @@
 ﻿# Tjidde.Logging
 
+[![NuGet](https://img.shields.io/nuget/v/Tjidde.Logging.svg)](https://www.nuget.org/packages/Tjidde.Logging)
+[![CI](https://github.com/tjidde-nl/TjiddeLogger/actions/workflows/ci.yml/badge.svg)](https://github.com/tjidde-nl/TjiddeLogger/actions/workflows/ci.yml)
+
 A reusable NuGet package for standardized, structured logging in .NET applications.  
 Integrates naturally with the Microsoft.Extensions.Logging pipeline.
 
@@ -35,7 +38,7 @@ dotnet add package Tjidde.Logging
 Or via PackageReference:
 
 ```xml
-<PackageReference Include="Tjidde.Logging" Version="1.0.0" />
+<PackageReference Include="Tjidde.Logging" Version="*" />
 ```
 
 ---
@@ -116,7 +119,7 @@ CustomerContext.Set("AcmeCorp");
 
 // Later in any service in the same async flow:
 _logger.LogInformation("Order placed successfully.");
-// Output: 2024-03-17: 14:22:01: [INF] OrderService: AcmeCorp: Order placed successfully.
+// Output: 2024-03-17: 14:22:01: [INFORMATION] Class=>OrderService: Client=>AcmeCorp: Order placed successfully.
 
 // Clear when done (optional — AsyncLocal is scoped to the flow):
 CustomerContext.Clear();
@@ -161,7 +164,7 @@ public class OrderService
 
 Output:
 ```
-2024-03-17: 14:22:01: [INF] OrderService: AcmeCorp: Placing order 42
+2024-03-17: 14:22:01: [INFORMATION] Class=>OrderService: Client=>AcmeCorp: Placing order 42
 ```
 
 ### Logging an exception
@@ -179,15 +182,37 @@ catch (Exception ex)
 
 Output:
 ```
-2024-03-17: 14:22:01: [ERR] OrderService: AcmeCorp: Failed to process order 42
-Exception Type : System.InvalidOperationException
-Message        : Payment gateway timeout
-Stack Trace    :
-  at OrderService.ProcessPayment() in OrderService.cs:line 42
-Inner Exception:
-  -> Exception Type : System.TimeoutException
-  -> Message        : The operation timed out
+2024-03-17: 14:22:01: [ERROR] Class=>OrderService: Client=>AcmeCorp: Failed to process order 42 | Exception: [System.InvalidOperationException: Payment gateway timeout | StackTrace: at OrderService.ProcessPayment() in OrderService.cs:line 42] -> [System.TimeoutException: The operation timed out]
 ```
+
+---
+
+## Sinks: writing to more than the console
+
+The console is the default destination. Extra destinations implement `ILogSink` (namespace `Tjidde.Logging.Sinks`) and receive every entry as an immutable `TjiddeLogEntry`: `Timestamp`, `Level`, `EventId`, `Category`, `ClassName`, `MethodName`, `Customer`, `Message`, `FormattedException`, `RenderedLine` (text or JSON, as on the console), `OutputFormat` and `IsMetrics`. All text in the entry is masked; it never contains unmasked values.
+
+```csharp
+builder.Logging
+    .AddTjiddeLogger()
+    .AddTjiddeInMemorySink(capacity: 500)   // built-in: inject InMemoryLogSink to read the entries
+    .AddTjiddeSink<MyFileSink>();           // your own sink, created by the container
+
+// or register directly:
+builder.Services.AddSingleton<ILogSink, MyFileSink>();
+```
+
+```csharp
+public sealed class MyFileSink : ILogSink
+{
+    public void Write(TjiddeLogEntry entry) { /* fast, thread-safe */ }
+}
+```
+
+- Sinks are called **synchronously** on the logging thread, in registration order. Keep `Write` fast and thread-safe; queue slow I/O yourself.
+- An exception in a sink is ignored: logging never throws, and the console and the other sinks still get the entry. An entry logged from inside a sink is not sent to the sinks again.
+- A sink must not take `ILogger<T>` in its constructor (circular dependency).
+- `InMemoryLogSink` keeps the newest `Capacity` entries (default 1000), with `GetSnapshot()`, `Count`, `Clear()` and the events `EntryAdded` and `Cleared`. Useful for UIs and tests.
+- Set `WriteToConsole = false` (or `"TjiddeLogger": { "WriteToConsole": false }`) to write only to the sinks, for example in a desktop or terminal UI. It applies immediately when the options reload.
 
 ---
 
@@ -210,6 +235,7 @@ YYYY-MM-DD: HH:mm:ss: [LEVEL] Class=>ClassName Method=>MethodName: Client=>Custo
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
+| `WriteToConsole` | `bool` | `true` | Write entries to the console; `false` writes only to the registered sinks |
 | `IncludeScopes` | `bool` | `true` | Include scope information in output |
 | `UseUtcTimestamp` | `bool` | `false` | Write timestamps in UTC instead of local time |
 | `ResolveMethodNameFromStackTrace` | `bool` | `false` | Fall back to the stack trace for the method name when no `MethodName` scope is active (slow) |
@@ -260,8 +286,7 @@ Values that are only known at runtime (a token from a vault, a customer code) ca
 The following capabilities are **intentionally not implemented** in v1.0 but the package is designed to support them:
 
 - **Method argument logging** — The `ICustomerContextAccessor` and scope design allow future decorator/interceptor-based enrichment. Attribute-based exclusion (`[SensitiveArgument]`) can be layered on top.
-- **Sink abstraction** — Currently writes to Console. A future `ITjiddeLogSink` abstraction can route output to files, databases, or external systems.
-- **Structured output formats** — JSON or OTLP output can be added as alternative formatters.
+- **Additional structured outputs** — JSON is built in; OTLP/log-record output can be added as an alternative formatter or sink.
 - **Automatic argument logging** — Explicitly deferred due to privacy, security, and performance risks. When added, it will require opt-in per method or argument.
 
 ---
@@ -280,8 +305,13 @@ Tjidde.Logging/
 │   ├── IExceptionFormatter.cs            # Exception formatting contract
 │   └── ExceptionFormatter.cs            # Structured exception output
 ├── Logging/
+│   ├── ConsoleLogProcessor.cs          # Background console writer (default sink)
 │   ├── TjiddeLogger.cs                 # ILogger implementation
 │   └── TjiddeLoggerProvider.cs         # ILoggerProvider implementation
+├── Sinks/
+│   ├── ILogSink.cs                       # Extra destinations for entries
+│   ├── TjiddeLogEntry.cs                 # Immutable, masked entry passed to sinks
+│   └── InMemoryLogSink.cs                # Built-in bounded in-memory sink
 ├── Masking/
 │   ├── IMaskedKeysAccessor.cs            # Runtime keys abstraction (+ GlobalMaskedKeysAccessor)
 │   ├── MaskedKeysStore.cs                # Per-host runtime keys (UseIsolatedMaskedKeys)

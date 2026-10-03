@@ -13,15 +13,17 @@ Tjidde.Logging is a logging provider for `Microsoft.Extensions.Logging`. Applica
 - masking of sensitive values (passwords, tokens, API keys, and so on)
 - compact single-line exception formatting
 - optional OpenTelemetry span events
+- optional extra destinations (sinks) next to, or instead of, the console
 
 Target frameworks: `net7.0`, `net8.0`, `net9.0`, `net10.0`.
 
 | Namespace | Contains |
 |---|---|
-| `Tjidde.Logging.Extensions` | `AddTjiddeLogger`, `UseTjiddeJsonFormat`, `UseTjiddeTextFormat`, `UseIsolatedMaskedKeys`, `BeginMethodScope`, `LogMetrics` |
+| `Tjidde.Logging.Extensions` | `AddTjiddeLogger`, `UseTjiddeJsonFormat`, `UseTjiddeTextFormat`, `UseIsolatedMaskedKeys`, `AddTjiddeSink`, `AddTjiddeInMemorySink`, `BeginMethodScope`, `LogMetrics` |
 | `Tjidde.Logging.Options` | `TjiddeLoggerOptions`, `TjiddeLogOutputFormat` |
 | `Tjidde.Logging.Context` | `ICustomerContextAccessor`, `AsyncLocalCustomerContextAccessor`, `CustomerContext` |
 | `Tjidde.Logging.Masking` | `IMaskedKeysAccessor`, `MaskedKeysStore`, `MaskedKeysContext` |
+| `Tjidde.Logging.Sinks` | `ILogSink`, `TjiddeLogEntry`, `InMemoryLogSink` |
 
 Prefer the DI route for testable code: implement `ICustomerContextAccessor` and use `UseIsolatedMaskedKeys()` with an injected `MaskedKeysStore`. The static `CustomerContext` and `MaskedKeysContext` are the convenience defaults; `MaskedKeysContext` is shared by every host and test in the process.
 
@@ -287,6 +289,23 @@ builder.Services.AddOpenTelemetry()
     .WithTracing(tracing => tracing.AddSource("Tjidde.Logging"));
 ```
 
+## Sinks (other destinations)
+
+The console is the default destination. To also send entries elsewhere, register an `ILogSink`:
+
+```csharp
+builder.Logging
+    .AddTjiddeLogger()
+    .AddTjiddeInMemorySink(capacity: 500)   // built-in; inject InMemoryLogSink to read it
+    .AddTjiddeSink<MyFileSink>();           // or: builder.Services.AddSingleton<ILogSink, MyFileSink>()
+```
+
+- `ILogSink.Write(TjiddeLogEntry entry)` receives an immutable entry with `Timestamp`, `Level`, `EventId`, `Category`, `ClassName`, `MethodName`, `Customer`, `Message`, `FormattedException`, `RenderedLine`, `OutputFormat` and `IsMetrics`. All text is already masked.
+- Sinks run synchronously on the logging thread: keep `Write` fast and thread-safe, and queue slow I/O yourself. A sink that throws is ignored; logging and the other sinks continue.
+- Do not inject `ILogger<T>` or `ILoggerFactory` into a sink's constructor (circular dependency).
+- Recognize metrics entries with `entry.IsMetrics` (event `MetricsEventId`), not with the obsolete `MetricsLoggerExtensions.Metrics` level.
+- Set `WriteToConsole = false` to write only to the sinks (for example in a desktop or terminal UI).
+
 ## Shutdown and flushing
 
 A background thread writes the lines to the console, so log calls do not wait for console I/O. Pending lines are flushed when the host stops, when a `LoggerFactory` is disposed, and on normal process exit. Lines still queued when the process crashes can be lost.
@@ -295,7 +314,7 @@ A background thread writes the lines to the console, so log calls do not wait fo
 
 The clock is the `TimeProvider` registered in DI, or `TimeProvider.System` when none is registered. To assert on timestamps, register a `FakeTimeProvider` (package `Microsoft.Extensions.TimeProvider.Testing`) with `services.AddSingleton<TimeProvider>(clock)`.
 
-In unit tests, inject `NullLogger<T>.Instance` (from `Microsoft.Extensions.Logging.Abstractions`) instead of the Tjidde logger. If a test must read the console output, dispose the `LoggerFactory` first so all lines have been written.
+In unit tests, inject `NullLogger<T>.Instance` (from `Microsoft.Extensions.Logging.Abstractions`) instead of the Tjidde logger. To assert on what the Tjidde logger writes, use `AddTjiddeInMemorySink()` (optionally with `WriteToConsole = false`) and read the injected `InMemoryLogSink.GetSnapshot()`: sinks are called synchronously, so no flushing is needed. If a test must read the console output instead, dispose the `LoggerFactory` first so all lines have been written.
 
 ## Options reference
 
@@ -304,6 +323,7 @@ Section name in `appsettings.json`: `TjiddeLogger`.
 | Option | Type | Default | Meaning |
 |---|---|---|---|
 | `OutputFormat` | `TjiddeLogOutputFormat` | `Text` | `Text` or `Json`. |
+| `WriteToConsole` | `bool` | `true` | Write entries to the console. `false` writes only to the registered sinks. |
 | `MinimumLevel` | `LogLevel` | `Trace` | Obsolete, removed in 2.0: use `Logging:Tjidde:LogLevel`. Minimum level when no category rule matches. |
 | `CategoryMinimumLevels` | `IDictionary<string, LogLevel>` | empty | Obsolete, removed in 2.0: use `Logging:Tjidde:LogLevel`. Minimum level per category or namespace prefix; the key `Default` is the fallback. |
 | `IncludeScopes` | `bool` | `true` | Append scope values to each entry. Also required for `BeginMethodScope`. |
