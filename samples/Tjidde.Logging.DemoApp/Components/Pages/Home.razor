@@ -1,7 +1,7 @@
 @page "/"
 @rendermode RenderMode.InteractiveServer
 @using Tjidde.Logging.Context
-@using Tjidde.Logging.DemoApp.Logging
+@using Tjidde.Logging.Sinks
 @using Tjidde.Logging.Extensions
 @using Microsoft.Extensions.Logging
 @inject ILogger<Home> Logger
@@ -23,7 +23,7 @@
             <select id="level" class="input" @bind="_selectedLevel">
                 @foreach (var (label, level) in _levels)
                 {
-                    <option value="@((int)level)">@label</option>
+                    <option value="@level">@label</option>
                 }
             </select>
         </div>
@@ -74,18 +74,18 @@
             <div class="log-list">
                 @foreach (var entry in Enumerable.Reverse(_entries))
                 {
-                    <div class="log-entry log-@LevelCssClass(entry.Level)">
+                    <div class="log-entry log-@LevelCssClass(entry)">
                         <div class="log-meta">
-                            <span class="log-level">@LevelLabel(entry.Level)</span>
+                            <span class="log-level">@LevelLabel(entry)</span>
                             <span class="log-time">@entry.Timestamp.ToString("yyyy-MM-dd HH:mm:ss")</span>
                             <span class="log-category">@ShortCategory(entry.Category)</span>
                         </div>
-                        <div class="log-message">@entry.FormattedMessage</div>
-                        @if (entry.ExceptionDetails is not null)
+                        <div class="log-message">@entry.Message</div>
+                        @if (entry.FormattedException is not null)
                         {
                             <details class="log-exception">
                                 <summary>Exception details</summary>
-                                <pre>@entry.ExceptionDetails</pre>
+                                <pre>@entry.FormattedException</pre>
                             </details>
                         }
                     </div>
@@ -97,15 +97,18 @@
 </div>
 
 @code {
-    private static readonly (string Label, LogLevel Level)[] _levels =
+    // "Metrics" is not a log level: it is logged with LogMetrics (Information + MetricsEventId).
+    private const int MetricsOption = -1;
+
+    private static readonly (string Label, int Level)[] _levels =
     [
-        ("Trace",       LogLevel.Trace),
-        ("Debug",       LogLevel.Debug),
-        ("Information", LogLevel.Information),
-        ("Warning",     LogLevel.Warning),
-        ("Error",       LogLevel.Error),
-        ("Critical",    LogLevel.Critical),
-        ("Metrics",     MetricsLoggerExtensions.Metrics)
+        ("Trace",       (int)LogLevel.Trace),
+        ("Debug",       (int)LogLevel.Debug),
+        ("Information", (int)LogLevel.Information),
+        ("Warning",     (int)LogLevel.Warning),
+        ("Error",       (int)LogLevel.Error),
+        ("Critical",    (int)LogLevel.Critical),
+        ("Metrics",     MetricsOption)
     ];
 
     private string _customer = string.Empty;
@@ -114,17 +117,22 @@
     private bool _includeException;
     private bool _includeInner;
     private string _exceptionMessage = "Something went wrong";
-    private IReadOnlyList<LogEntry> _entries = [];
+    private IReadOnlyList<TjiddeLogEntry> _entries = [];
 
     protected override void OnInitialized()
     {
-        Sink.OnChanged += RefreshEntries;
-        _entries = Sink.GetEntries();
+        Sink.EntryAdded += OnEntryAdded;
+        Sink.Cleared += OnCleared;
+        _entries = Sink.GetSnapshot();
     }
+
+    private void OnEntryAdded(object? sender, TjiddeLogEntry entry) => RefreshEntries();
+
+    private void OnCleared(object? sender, EventArgs e) => RefreshEntries();
 
     private void RefreshEntries()
     {
-        _entries = Sink.GetEntries();
+        _entries = Sink.GetSnapshot();
         InvokeAsync(StateHasChanged);
     }
 
@@ -145,7 +153,10 @@
                 inner);
         }
 
-        Logger.Log((LogLevel)_selectedLevel, ex, "{Message}", _message.Trim());
+        if (_selectedLevel == MetricsOption)
+            Logger.LogMetrics(ex, "{Message}", _message.Trim());
+        else
+            Logger.Log((LogLevel)_selectedLevel, ex, "{Message}", _message.Trim());
 
         CustomerContext.Clear();
     }
@@ -158,13 +169,18 @@
         return dot >= 0 ? category[(dot + 1)..] : category;
     }
 
-    private static string LevelCssClass(LogLevel level) => (int)level == 10
+    // Metrics entries are recognized by their event ID (MetricsEventId), not by a log level.
+    private static string LevelCssClass(TjiddeLogEntry entry) => entry.IsMetrics
         ? "metrics"
-        : level.ToString().ToLower();
+        : entry.Level.ToString().ToLower();
 
-    private static string LevelLabel(LogLevel level) => (int)level == 10
+    private static string LevelLabel(TjiddeLogEntry entry) => entry.IsMetrics
         ? "Metrics"
-        : level.ToString();
+        : entry.Level.ToString();
 
-    public void Dispose() => Sink.OnChanged -= RefreshEntries;
+    public void Dispose()
+    {
+        Sink.EntryAdded -= OnEntryAdded;
+        Sink.Cleared -= OnCleared;
+    }
 }

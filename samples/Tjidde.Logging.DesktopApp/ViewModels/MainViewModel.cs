@@ -3,8 +3,8 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Tjidde.Logging.Context;
-using Tjidde.Logging.DesktopApp.Logging;
 using Tjidde.Logging.Extensions;
+using Tjidde.Logging.Sinks;
 using Microsoft.Extensions.Logging;
 
 namespace Tjidde.Logging.DesktopApp.ViewModels;
@@ -16,7 +16,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private string _customer = string.Empty;
     private string _message = string.Empty;
-    private LogLevel _selectedLevel = LogLevel.Information;
+    private const string MetricsLevel = "Metrics";
+
+    private string _selectedLevel = nameof(LogLevel.Information);
     private bool _includeException;
     private bool _includeInner;
     private string _exceptionMessage = "Something went wrong";
@@ -25,11 +27,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         _logger = logger;
         _sink = sink;
-        _sink.OnChanged += OnSinkChanged;
+        _sink.EntryAdded += (_, _) => OnSinkChanged();
+        _sink.Cleared += (_, _) => OnSinkChanged();
         RefreshEntries();
     }
 
-    public ObservableCollection<LogEntry> Entries { get; } = new();
+    public ObservableCollection<TjiddeLogEntry> Entries { get; } = new();
 
     public string Customer
     {
@@ -43,7 +46,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         set { _message = value; OnPropertyChanged(); }
     }
 
-    public LogLevel SelectedLevel
+    public string SelectedLevel
     {
         get => _selectedLevel;
         set { _selectedLevel = value; OnPropertyChanged(); }
@@ -67,15 +70,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
         set { _exceptionMessage = value; OnPropertyChanged(); }
     }
 
-    public LogLevel[] LogLevels { get; } =
+    // "Metrics" is not a log level: it is logged with LogMetrics (Information + MetricsEventId).
+    public string[] LogLevels { get; } =
     [
-        LogLevel.Trace,
-        LogLevel.Debug,
-        LogLevel.Information,
-        LogLevel.Warning,
-        LogLevel.Error,
-        LogLevel.Critical,
-        MetricsLoggerExtensions.Metrics
+        nameof(LogLevel.Trace),
+        nameof(LogLevel.Debug),
+        nameof(LogLevel.Information),
+        nameof(LogLevel.Warning),
+        nameof(LogLevel.Error),
+        nameof(LogLevel.Critical),
+        MetricsLevel
     ];
 
     public void SendLog()
@@ -94,7 +98,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 string.IsNullOrWhiteSpace(_exceptionMessage) ? "Sample exception" : _exceptionMessage,
                 inner);
         }
-        _logger.Log(_selectedLevel, ex, "{Message}", _message.Trim());
+        if (_selectedLevel == MetricsLevel)
+            _logger.LogMetrics(ex, "{Message}", _message.Trim());
+        else
+            _logger.Log(Enum.Parse<LogLevel>(_selectedLevel), ex, "{Message}", _message.Trim());
         CustomerContext.Clear();
     }
 
@@ -110,7 +117,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private void RefreshEntries()
     {
-        var entries = _sink.GetEntries();
+        var entries = _sink.GetSnapshot();
         Entries.Clear();
         foreach (var e in entries.Reverse())
             Entries.Add(e);

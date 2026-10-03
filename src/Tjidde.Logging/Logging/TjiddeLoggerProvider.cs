@@ -3,6 +3,7 @@ using Tjidde.Logging.Context;
 using Tjidde.Logging.Formatting;
 using Tjidde.Logging.Masking;
 using Tjidde.Logging.Options;
+using Tjidde.Logging.Sinks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -23,6 +24,7 @@ public sealed class TjiddeLoggerProvider : ILoggerProvider, ISupportExternalScop
     private readonly object _sync = new();
     private readonly ConcurrentDictionary<string, TjiddeLogger> _loggers = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConsoleLogProcessor _processor = new();
+    private readonly LogSinkDispatcher _sinks;
     private IExternalScopeProvider _scopeProvider = NoopExternalScopeProvider.Instance;
     private bool _disposed;
 
@@ -48,8 +50,33 @@ public sealed class TjiddeLoggerProvider : ILoggerProvider, ISupportExternalScop
         ICustomerContextAccessor customerContextAccessor,
         IMaskedKeysAccessor maskedKeysAccessor,
         TimeProvider timeProvider)
+        : this(optionsMonitor, customerContextAccessor, maskedKeysAccessor, timeProvider, sinks: null)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of <see cref="TjiddeLoggerProvider"/> that takes its timestamps from
+    /// <paramref name="timeProvider"/> and passes every entry to <paramref name="sinks"/> besides the console.
+    /// </summary>
+    /// <param name="optionsMonitor">The options; changes apply to existing loggers immediately.</param>
+    /// <param name="customerContextAccessor">Supplies the customer of each entry.</param>
+    /// <param name="maskedKeysAccessor">Supplies the runtime masked keys.</param>
+    /// <param name="timeProvider">The clock for timestamps.</param>
+    /// <param name="sinks">
+    /// Extra destinations for the entries, called synchronously in this order. <see langword="null"/> means none.
+    /// A sink that throws is ignored and does not affect the others.
+    /// </param>
+    /// <exception cref="ArgumentNullException"><paramref name="timeProvider"/> is <see langword="null"/>.</exception>
+    public TjiddeLoggerProvider(
+        IOptionsMonitor<TjiddeLoggerOptions> optionsMonitor,
+        ICustomerContextAccessor customerContextAccessor,
+        IMaskedKeysAccessor maskedKeysAccessor,
+        TimeProvider timeProvider,
+        IEnumerable<ILogSink>? sinks)
     {
         ArgumentNullException.ThrowIfNull(timeProvider);
+
+        _sinks = new LogSinkDispatcher(sinks);
 
         _customerContextAccessor = customerContextAccessor;
         _maskedKeysAccessor = maskedKeysAccessor;
@@ -109,7 +136,7 @@ public sealed class TjiddeLoggerProvider : ILoggerProvider, ISupportExternalScop
     }
 
     private TjiddeLogger CreateLoggerInstance(string categoryName)
-        => new(categoryName, _configuration, _customerContextAccessor, _processor, _scopeProvider, _timeProvider);
+        => new(categoryName, _configuration, _customerContextAccessor, _processor, _scopeProvider, _timeProvider, _sinks);
 
     private void OnOptionsChanged(TjiddeLoggerOptions options, string? name)
     {

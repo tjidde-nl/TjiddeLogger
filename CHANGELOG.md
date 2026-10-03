@@ -12,6 +12,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 - `MaskedKeysStore`: a non-static, thread-safe `IMaskedKeysAccessor` with `Add`, `Remove`, `Clear` and `GetKeys` that returns immutable snapshots, and the builder extension `UseIsolatedMaskedKeys()`, which registers one store per host as the `IMaskedKeysAccessor` (replacing an earlier registration, in any order relative to `AddTjiddeLogger`). Inject `MaskedKeysStore` to add keys that apply immediately to that host's loggers only, so hosts and tests in one process no longer share runtime keys. The static `MaskedKeysContext` stays the default and now uses a `MaskedKeysStore` internally. The README, wikis and AI integration guide now recommend the accessors and DI for testable code and describe the static classes as the convenience variant.
 
+- Sinks: the public `ILogSink` interface (namespace `Tjidde.Logging.Sinks`) receives every entry as an immutable `TjiddeLogEntry` with `Timestamp`, `Level`, `EventId`, `Category`, `ClassName`, `MethodName`, `Customer`, `Message`, `FormattedException`, `RenderedLine` (text or JSON), `OutputFormat` and `IsMetrics`; all text in it is masked. Register sinks with `AddTjiddeSink<TSink>()`, `AddTjiddeSink(instance)` or `services.AddSingleton<ILogSink, ...>()`. Sinks are called synchronously on the logging thread; an exception in a sink is ignored and never affects logging, the console or other sinks, and entries logged from inside a sink are not dispatched again. New constructor overload `TjiddeLoggerProvider(..., TimeProvider, IEnumerable<ILogSink>?)`.
+- `InMemoryLogSink`: a built-in, thread-safe sink that keeps the newest `Capacity` entries (default 1000), with `GetSnapshot()`, `Count`, `Clear()` and the events `EntryAdded` and `Cleared`. Register it with `AddTjiddeInMemorySink(capacity)`.
+- `TjiddeLoggerOptions.WriteToConsole` (default `true`): set to `false` to write only to the sinks. Applies immediately when the options reload.
+- XML documentation for `TjiddeLogOutputFormat.Text` and `Json`.
+- Samples: the Blazor, Avalonia and terminal samples use the built-in `InMemoryLogSink` instead of their own in-memory logger providers, recognize metrics entries by their event ID instead of the obsolete `Metrics` level, and log metrics with `LogMetrics`. The terminal sample turns the console off, so console output no longer draws over its UI.
+
 ### Changed
 - Options changes now apply to existing loggers immediately, without a restart: the provider listens to `IOptionsMonitor<TjiddeLoggerOptions>.OnChange`, and `AddTjiddeLogger(IConfiguration)` / `AddTjiddeLogger(IConfigurationSection)` rebind the options when the configuration reloads (for example `appsettings.json` with `reloadOnChange`). Options, masker, exception formatter and OpenTelemetry fallback `ActivitySource` are replaced together, so a log call never mixes old and new settings; the previous `ActivitySource` is disposed.
 - `LogMetrics` now logs at `LogLevel.Information` with `MetricsEventId` instead of the custom level `(LogLevel)10`. Tjidde.Logging still shows these entries as `[METRICS]` and its own minimum level never drops them; other providers see a normal information entry. `LogMetrics(EventId, ...)` keeps the caller's event ID and only adds the name `Metrics` when it has none.
@@ -19,6 +25,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - All loggers of a provider share one `SensitiveDataMasker` (and its regular expressions) per configuration instead of building one per category; it is replaced when the options change.
 - `AddTjiddeLogger` registers `TjiddeLoggerProvider` through a factory, so the container never has to choose between its constructors.
 - `IsEnabled` caches the resolved minimum level per logger until the options change, instead of matching `CategoryMinimumLevels` on every call.
+
+### Performance
+Output is unchanged; see `benchmarks/README.md` for the measurements (new BenchmarkDotNet project `benchmarks/Tjidde.Logging.Benchmarks`).
+- `SensitiveDataMasker.MaskMessage` skips the regular expressions of a key that does not occur in the text (case-insensitive ordinal check, on .NET 9+ one `SearchValues<string>` scan for all keys). Text with non-ASCII characters and non-ASCII keys still always run the expressions, because those can match case-insensitively in ways an ordinal comparison does not.
+- Fewer allocations per entry: the list of masked property names is only created when a property is masked, the property list is sized up front, the scopes are read in one pass (method name and scope texts together, without closures or LINQ), and the text line is written into one reused `StringBuilder` per thread instead of via intermediate strings.
 
 ### Fixed
 - `LogMetrics` threw an `ArgumentOutOfRangeException` when another provider, such as the Microsoft console logger (`AddConsole()`), was also registered.

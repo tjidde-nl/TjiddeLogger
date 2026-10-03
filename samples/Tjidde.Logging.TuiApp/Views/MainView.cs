@@ -102,13 +102,15 @@ public sealed class MainView
             var customer = txtCustomer.Text.ToString(); 
             CustomerContext.Set(customer);
             var level = ParseLogLevel(comboLevel.SelectedItem);
+            var metrics = comboLevel.SelectedItem == MetricsIndex;
             var ex = BuildException(chkException.Checked, txtExMsg.Text.ToString(), chkInner.Checked);
 
             _logService.SendLog(
                 msg.Trim(),
                 level,
                 string.IsNullOrWhiteSpace(customer) ? null : customer.Trim(),
-                ex);
+                ex,
+                metrics);
 
             RefreshLogs();
         };
@@ -178,6 +180,9 @@ public sealed class MainView
         };
     }
 
+    // "Metrics" is not a log level: it is logged with LogMetrics (Information + MetricsEventId).
+    private const int MetricsIndex = 6;
+
     private static LogLevel ParseLogLevel(int selectedIndex) => selectedIndex switch
     {
         0 => LogLevel.Trace,
@@ -186,7 +191,6 @@ public sealed class MainView
         3 => LogLevel.Warning,
         4 => LogLevel.Error,
         5 => LogLevel.Critical,
-        6 => (LogLevel)700,
         _ => LogLevel.Information
     };
 

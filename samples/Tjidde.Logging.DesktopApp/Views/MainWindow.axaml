@@ -1,7 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:Tjidde.Logging.DesktopApp.ViewModels"
-        xmlns:logging="using:Tjidde.Logging.DesktopApp.Logging"
+        xmlns:sinks="using:Tjidde.Logging.Sinks"
         x:Class="Tjidde.Logging.DesktopApp.Views.MainWindow"
         Title="Tjidde Logger Demo"
         Width="1000" Height="700"
@@ -96,7 +96,7 @@
                 <ScrollViewer>
                     <ItemsControl ItemsSource="{Binding Entries}">
                         <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="logging:LogEntry">
+                            <DataTemplate x:DataType="sinks:TjiddeLogEntry">
                                 <Border Margin="0,0,0,6"
                                         CornerRadius="4"
                                         Padding="10,8"
@@ -105,8 +105,8 @@
                                         <!-- Meta row -->
                                         <StackPanel Orientation="Horizontal" Spacing="8">
                                             <Border CornerRadius="3" Padding="4,2"
-                                                    Background="{Binding Level, Converter={StaticResource LevelColorConverter}}">
-                                                <TextBlock Text="{Binding Level}"
+                                                    Background="{Binding Converter={StaticResource LevelColorConverter}}">
+                                                <TextBlock Text="{Binding Converter={StaticResource LevelLabelConverter}}"
                                                            FontSize="11" FontWeight="Bold"
                                                            Foreground="White" />
                                             </Border>
@@ -118,13 +118,13 @@
                                                        VerticalAlignment="Center"/>
                                         </StackPanel>
                                         <!-- Message -->
-                                        <TextBlock Text="{Binding FormattedMessage}"
+                                        <TextBlock Text="{Binding Message}"
                                                    Foreground="#DDDDEE"
                                                    TextWrapping="Wrap" />
                                         <!-- Exception -->
-                                        <Border IsVisible="{Binding ExceptionDetails, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                        <Border IsVisible="{Binding FormattedException, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                                                 Background="#2A1A1A" CornerRadius="3" Padding="8,6" Margin="0,4,0,0">
-                                            <TextBlock Text="{Binding ExceptionDetails}"
+                                            <TextBlock Text="{Binding FormattedException}"
                                                        Foreground="#FF8888"
                                                        FontFamily="Courier New,Consolas,monospace"
                                                        FontSize="11"

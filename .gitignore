@@ -39,3 +39,6 @@ desktop.ini
 
 # Logs
 *.log
+
+# BenchmarkDotNet results
+BenchmarkDotNet.Artifacts/
