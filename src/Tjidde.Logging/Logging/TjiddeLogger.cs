@@ -7,6 +7,7 @@ using Tjidde.Logging.Sinks;
 using Microsoft.Extensions.Logging;
 using System.Buffers;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -333,7 +334,7 @@ internal sealed class TjiddeLogger : ILogger
     /// structured state yields its unrendered template, because the framework's formatter inserts raw
     /// (unmasked) values of sensitive properties.
     /// </summary>
-    private string? FallbackMessage<TState>(TjiddeLoggerConfiguration config, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+    private static string? FallbackMessage<TState>(TjiddeLoggerConfiguration config, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
     {
         if (config.Options.EnableSensitiveDataMasking && state is IEnumerable<KeyValuePair<string, object?>> structuredState)
         {
@@ -368,7 +369,7 @@ internal sealed class TjiddeLogger : ILogger
         }
     }
 
-    private string? TryMask(TjiddeLoggerConfiguration config, string? text)
+    private static string? TryMask(TjiddeLoggerConfiguration config, string? text)
     {
         if (text is null || !config.Options.EnableSensitiveDataMasking)
             return text;
@@ -413,7 +414,7 @@ internal sealed class TjiddeLogger : ILogger
 
     private static string Unserializable(object value) => $"[unserializable: {value.GetType().FullName}]";
 
-    private string RenderMessage<TState>(
+    private static string RenderMessage<TState>(
         TjiddeLoggerConfiguration config,
         TState state,
         Exception? exception,
@@ -446,7 +447,7 @@ internal sealed class TjiddeLogger : ILogger
         return config.Options.EnableSensitiveDataMasking ? config.Masker.MaskMessage(message) : message;
     }
 
-    private object? SafeMaskPropertyValue(TjiddeLoggerConfiguration config, string key, object? value, ref List<string>? maskedKeyNames)
+    private static object? SafeMaskPropertyValue(TjiddeLoggerConfiguration config, string key, object? value, ref List<string>? maskedKeyNames)
     {
         try
         {
@@ -459,7 +460,7 @@ internal sealed class TjiddeLogger : ILogger
         }
     }
 
-    private object? MaskPropertyValue(TjiddeLoggerConfiguration config, string key, object? value, ref List<string>? maskedKeyNames)
+    private static object? MaskPropertyValue(TjiddeLoggerConfiguration config, string key, object? value, ref List<string>? maskedKeyNames)
     {
         if (!config.Options.EnableSensitiveDataMasking)
             return value;
@@ -474,7 +475,7 @@ internal sealed class TjiddeLogger : ILogger
         return value is string text ? config.Masker.MaskMessage(text) : value;
     }
 
-    private string FormatException(TjiddeLoggerConfiguration config, Exception exception)
+    private static string FormatException(TjiddeLoggerConfiguration config, Exception exception)
     {
         string formatted;
         try
@@ -841,7 +842,7 @@ internal sealed class TjiddeLogger : ILogger
     /// throwing getter, too deep) only affects itself: it falls back to <c>ToString()</c>, or to
     /// <c>[unserializable: TypeName]</c> when that throws too.
     /// </summary>
-    private object? ToSerializableValue(TjiddeLoggerConfiguration config, object? value)
+    private static object? ToSerializableValue(TjiddeLoggerConfiguration config, object? value)
     {
         // Values that serialize to themselves are written directly, which gives the same JSON as their element.
         // Strings with surrogates go through the serializer, whose round trip may change unpaired surrogates.
@@ -893,7 +894,13 @@ internal sealed class TjiddeLogger : ILogger
         string? customer,
         string message)
     {
-        sb.Append($"{timestamp:yyyy-MM-dd}: {timestamp:HH:mm:ss}: [").Append(level).Append("] Class=>").Append(className);
+        sb.Append(timestamp.ToString("yyyy-MM-dd", CultureInfo.CurrentCulture))
+            .Append(": ")
+            .Append(timestamp.ToString("HH:mm:ss", CultureInfo.CurrentCulture))
+            .Append(": [")
+            .Append(level)
+            .Append("] Class=>")
+            .Append(className);
 
         if (!string.IsNullOrWhiteSpace(methodName))
             sb.Append(" Method=>").Append(methodName);
