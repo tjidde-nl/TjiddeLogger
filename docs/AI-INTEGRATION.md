@@ -15,7 +15,7 @@ Tjidde.Logging is a logging provider for `Microsoft.Extensions.Logging`. Applica
 - optional OpenTelemetry span events
 - optional extra destinations (sinks) next to, or instead of, the console
 
-Target frameworks: `net7.0`, `net8.0`, `net9.0`, `net10.0`.
+Target frameworks: `net8.0`, `net9.0`, `net10.0`.
 
 | Namespace | Contains |
 |---|---|
@@ -108,7 +108,7 @@ Use the standard `Logging` section. `Logging:Tjidde:LogLevel` applies to this pr
 }
 ```
 
-Do not use `TjiddeLogger:MinimumLevel` or `TjiddeLogger:CategoryMinimumLevels` in new code: they are obsolete (compiler warning CS0618) and will be removed in 2.0. They still work as a second filter after the `Logging` section, so an entry must pass both and the stricter level wins. When you find them, move the values to `Logging:Tjidde:LogLevel` (same keys, same `Default` fallback).
+Do not use `TjiddeLogger:MinimumLevel` or `TjiddeLogger:CategoryMinimumLevels` in new code: they are obsolete (compiler warning CS0618) and will be removed in a future major version. They still work as a second filter after the `Logging` section, so an entry must pass both and the stricter level wins. When you find them, move the values to `Logging:Tjidde:LogLevel` (same keys, same `Default` fallback).
 
 With `AddTjiddeLogger(builder.Configuration)` and `reloadOnChange` (the default for `appsettings.json`), changes to the `TjiddeLogger` and `Logging` sections apply to existing loggers without a restart.
 
@@ -324,8 +324,8 @@ Section name in `appsettings.json`: `TjiddeLogger`.
 |---|---|---|---|
 | `OutputFormat` | `TjiddeLogOutputFormat` | `Text` | `Text` or `Json`. |
 | `WriteToConsole` | `bool` | `true` | Write entries to the console. `false` writes only to the registered sinks. |
-| `MinimumLevel` | `LogLevel` | `Trace` | Obsolete, removed in 2.0: use `Logging:Tjidde:LogLevel`. Minimum level when no category rule matches. |
-| `CategoryMinimumLevels` | `IDictionary<string, LogLevel>` | empty | Obsolete, removed in 2.0: use `Logging:Tjidde:LogLevel`. Minimum level per category or namespace prefix; the key `Default` is the fallback. |
+| `MinimumLevel` | `LogLevel` | `Trace` | Obsolete, will be removed in a future major version: use `Logging:Tjidde:LogLevel`. Minimum level when no category rule matches. |
+| `CategoryMinimumLevels` | `IDictionary<string, LogLevel>` | empty | Obsolete, will be removed in a future major version: use `Logging:Tjidde:LogLevel`. Minimum level per category or namespace prefix; the key `Default` is the fallback. |
 | `IncludeScopes` | `bool` | `true` | Append scope values to each entry. Also required for `BeginMethodScope`. |
 | `UseUtcTimestamp` | `bool` | `false` | Write timestamps in UTC instead of local time. |
 | `ResolveMethodNameFromStackTrace` | `bool` | `false` | Find the method name from the stack trace when no method scope is active. Slow. |

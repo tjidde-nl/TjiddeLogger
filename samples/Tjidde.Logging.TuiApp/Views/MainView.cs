@@ -1,109 +1,88 @@
 using Tjidde.Logging.Context;
 using Tjidde.Logging.TuiApp.Services;
 using Microsoft.Extensions.Logging;
-using Terminal.Gui;
+using Terminal.Gui.App;
+using Terminal.Gui.Input;
+using Terminal.Gui.ViewBase;
+using Terminal.Gui.Views;
 
 namespace Tjidde.Logging.TuiApp.Views;
 
 public sealed class MainView
 {
+    private readonly IApplication _app;
     private readonly ILogService _logService;
-    private readonly ColorScheme _colorScheme;
 
     private ListView _logList = null!;
 
-    public MainView(ILogService logService, ColorScheme colorScheme)
+    public MainView(IApplication app, ILogService logService)
     {
+        _app = app;
         _logService = logService;
-        _colorScheme = colorScheme;
     }
 
-    public void Build(Toplevel top)
+    public void Build(Window top)
     {
-        var win = new Window("Tjidde Logger TUI")
-        {
-            X = 0, Y = 0,
-            Width = Dim.Fill(), Height = Dim.Fill(),
-            ColorScheme = _colorScheme
-        };
-        top.Add(win);
-
         var leftPane = CreateLeftPane();
         var rightPane = CreateRightPane(leftPane);
-        win.Add(leftPane, rightPane);
-
-        RegisterHelpKey(top);
+        top.Add(leftPane, rightPane);
 
         _logService.LogsChanged += () =>
-            Application.MainLoop.Invoke(RefreshLogs);
+            _app.Invoke(RefreshLogs);
     }
 
     private FrameView CreateLeftPane()
     {
-        var pane = new FrameView("Send Log Entry")
+        var pane = new FrameView
         {
+            Title = "Send Log Entry",
             X = 0, Y = 0,
-            Width = Dim.Percent(40), Height = Dim.Fill(),
-            ColorScheme = _colorScheme
+            Width = Dim.Percent(40), Height = Dim.Fill()
         };
 
-        // Customer
-        var lblCustomer = new Label("_Customer:") { X = 1, Y = 1 };
-        var txtCustomer = new TextField("") { X = 1, Y = 2, Width = Dim.Fill(1), ColorScheme = _colorScheme };
-        lblCustomer.Clicked += () => txtCustomer.SetFocus();
+        var lblCustomer = new Label { Text = "Customer:", X = 1, Y = 1 };
+        var txtCustomer = new TextField { X = 1, Y = 2, Width = Dim.Fill(1) };
 
-        // Log Level
-        var lblLevel = new Label("_Log Level:") { X = 1, Y = 4 };
-        var levels = new[] { "Trace", "Debug", "Information", "Warning", "Error", "Critical", "Metrics" };
-        var comboLevel = new ComboBox
-        {
-            X = 1, Y = 5,
-            Width = Dim.Fill(1), Height = 5,
-            ColorScheme = _colorScheme
-        };
-        comboLevel.SetSource(levels);
-        comboLevel.Text = levels[2];
-        lblLevel.Clicked += () => comboLevel.SetFocus();
+        var lblLevel = new Label { Text = "Level:", X = 1, Y = 4 };
+        var txtLevel = new TextField { Text = "Information", X = 1, Y = 5, Width = Dim.Fill(1) };
 
-        // Message
-        var lblMessage = new Label("_Message:") { X = 1, Y = 7 };
-        var txtMessage = new TextView
+        var lblMessage = new Label { Text = "Message:", X = 1, Y = 7 };
+        var txtMessage = new TextField
         {
             X = 1, Y = 8,
-            Width = Dim.Fill(1), Height = 3,
-            ColorScheme = _colorScheme
-        };
-        lblMessage.Clicked += () => txtMessage.SetFocus();
-
-        // Exception
-        var chkException = new CheckBox("Include _Exception") { X = 1, Y = 12, ColorScheme = _colorScheme };
-        var lblExMsg = new Label("E_xception Msg:") { X = 1, Y = 13, Visible = false };
-        var txtExMsg = new TextField("Something went wrong") { X = 1, Y = 14, Width = Dim.Fill(1), Visible = false, ColorScheme = _colorScheme };
-        lblExMsg.Clicked += () => { if (txtExMsg.Visible) txtExMsg.SetFocus(); };
-        var chkInner = new CheckBox("Include _Inner Exception") { X = 1, Y = 15, Visible = false, ColorScheme = _colorScheme };
-
-        chkException.Toggled += _ =>
-        {
-            lblExMsg.Visible = chkException.Checked;
-            txtExMsg.Visible = chkException.Checked;
-            chkInner.Visible = chkException.Checked;
+            Width = Dim.Fill(1)
         };
 
-        // Buttons
-        var btnSend = new Button("_Send Log") { X = 1, Y = 17, ColorScheme = _colorScheme };
-        var btnClear = new Button("C_lear Log") { X = Pos.Right(btnSend) + 2, Y = 17, ColorScheme = _colorScheme };
+        var chkException = new CheckBox { Text = "Include Exception", X = 1, Y = 10 };
+        var lblExMsg = new Label { Text = "Exception Msg:", X = 1, Y = 11, Visible = false };
+        var txtExMsg = new TextField { Text = "Something went wrong", X = 1, Y = 12, Width = Dim.Fill(1), Visible = false };
+        var chkInner = new CheckBox { Text = "Include Inner Exception", X = 1, Y = 13, Visible = false };
 
-        btnSend.Clicked += () =>
+        chkException.ValueChanged += (_, _) =>
         {
-           
+            var visible = chkException.Value == CheckState.Checked;
+            lblExMsg.Visible = visible;
+            txtExMsg.Visible = visible;
+            chkInner.Visible = visible;
+        };
+
+        var btnSend = new Button { Text = "Send Log", X = 1, Y = 15 };
+        var btnClear = new Button { Text = "Clear Log", X = Pos.Right(btnSend) + 2, Y = 15 };
+
+        btnSend.Accepted += (_, _) =>
+        {
             var msg = txtMessage.Text.ToString();
             if (string.IsNullOrWhiteSpace(msg)) return;
 
             var customer = txtCustomer.Text.ToString(); 
             CustomerContext.Set(customer);
-            var level = ParseLogLevel(comboLevel.SelectedItem);
-            var metrics = comboLevel.SelectedItem == MetricsIndex;
-            var ex = BuildException(chkException.Checked, txtExMsg.Text.ToString(), chkInner.Checked);
+            var requestedLevel = txtLevel.Text.ToString();
+            var level = ParseLogLevel(requestedLevel);
+            var metrics = string.Equals(requestedLevel, "Metrics", StringComparison.OrdinalIgnoreCase);
+            var ex = BuildException(
+                chkException.Value == CheckState.Checked,
+                txtExMsg.Text.ToString(),
+                chkInner.Value == CheckState.Checked);
 
             _logService.SendLog(
                 msg.Trim(),
@@ -115,13 +94,13 @@ public sealed class MainView
             RefreshLogs();
         };
 
-        btnClear.Clicked += () =>
+        btnClear.Accepted += (_, _) =>
         {
             _logService.ClearLogs();
             RefreshLogs();
         };
 
-        pane.Add(lblCustomer, txtCustomer, lblLevel, comboLevel, lblMessage, txtMessage,
+        pane.Add(lblCustomer, txtCustomer, lblLevel, txtLevel, lblMessage, txtMessage,
             chkException, lblExMsg, txtExMsg, chkInner, btnSend, btnClear);
 
         return pane;
@@ -129,20 +108,18 @@ public sealed class MainView
 
     private FrameView CreateRightPane(View leftPane)
     {
-        var pane = new FrameView("Log Output")
+        var pane = new FrameView
         {
+            Title = "Log Output",
             X = Pos.Right(leftPane), Y = 0,
-            Width = Dim.Fill(), Height = Dim.Fill(),
-            ColorScheme = _colorScheme
+            Width = Dim.Fill(), Height = Dim.Fill()
         };
 
         _logList = new ListView
         {
             X = 0, Y = 0,
             Width = Dim.Fill(), Height = Dim.Fill(),
-            CanFocus = true,
-            ColorScheme = _colorScheme,
-            HotKey = Key.AltMask | (Key)'o'
+            CanFocus = true
         };
 
         pane.Add(_logList);
@@ -152,45 +129,16 @@ public sealed class MainView
     private void RefreshLogs()
     {
         var entries = _logService.GetFormattedEntries();
-        _logList.SetSource(entries.ToList());
+        _logList.SetSource(new System.Collections.ObjectModel.ObservableCollection<string>(entries));
     }
 
-    private static void RegisterHelpKey(Toplevel top)
+    private static LogLevel ParseLogLevel(string? selectedLevel) => selectedLevel?.Trim().ToLowerInvariant() switch
     {
-        top.KeyPress += e =>
-        {
-            if (e.KeyEvent.Key == Key.F1 ||
-                e.KeyEvent.Key == (Key.AltMask | (Key)'h') ||
-                e.KeyEvent.Key == (Key.AltMask | (Key)'H'))
-            {
-                MessageBox.Query("Hotkeys Help",
-                    "Alt+C: Customer\n" +
-                    "Alt+L: Log Level\n" +
-                    "Alt+M: Message\n" +
-                    "Alt+E: Include Exception\n" +
-                    "Alt+X: Exception Msg (if visible)\n" +
-                    "Alt+I: Include Inner Exception (if visible)\n" +
-                    "Alt+S: Send Log\n" +
-                    "Alt+A: Clear Log\n" +
-                    "Alt+O: Log Output\n" +
-                    "F1 or Alt+H: Show this Help",
-                    "Close");
-                e.Handled = true;
-            }
-        };
-    }
-
-    // "Metrics" is not a log level: it is logged with LogMetrics (Information + MetricsEventId).
-    private const int MetricsIndex = 6;
-
-    private static LogLevel ParseLogLevel(int selectedIndex) => selectedIndex switch
-    {
-        0 => LogLevel.Trace,
-        1 => LogLevel.Debug,
-        2 => LogLevel.Information,
-        3 => LogLevel.Warning,
-        4 => LogLevel.Error,
-        5 => LogLevel.Critical,
+        "trace" => LogLevel.Trace,
+        "debug" => LogLevel.Debug,
+        "warning" => LogLevel.Warning,
+        "error" => LogLevel.Error,
+        "critical" => LogLevel.Critical,
         _ => LogLevel.Information
     };
 

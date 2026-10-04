@@ -3,12 +3,12 @@
 All notable changes to Tjidde.Logging are listed here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [2.0.0] - 2026-10-04
 
 ### Added
 - `MetricsLoggerExtensions.MetricsEventId` (`Id = 10000`, `Name = "Metrics"`), plus the constants `MetricsEventName` and `MetricsEventIdValue`. Tjidde.Logging shows every entry with event name `Metrics` as `[METRICS]` in magenta.
 - `TjiddeLoggerOptions.UseUtcTimestamp` (default `false`): write timestamps in UTC instead of local time. JSON `@timestamp` is ISO-8601 with the offset (`+00:00` in UTC).
-- Timestamps come from `System.TimeProvider`: the one registered in DI, or `TimeProvider.System` when none is registered, so tests can use a `FakeTimeProvider`. New constructor overload `TjiddeLoggerProvider(IOptionsMonitor<TjiddeLoggerOptions>, ICustomerContextAccessor, IMaskedKeysAccessor, TimeProvider)`; the existing constructor still works and uses `TimeProvider.System`. On .NET 7 this adds a dependency on `Microsoft.Bcl.TimeProvider`.
+- Timestamps come from `System.TimeProvider`: the one registered in DI, or `TimeProvider.System` when none is registered, so tests can use a `FakeTimeProvider`. New constructor overload `TjiddeLoggerProvider(IOptionsMonitor<TjiddeLoggerOptions>, ICustomerContextAccessor, IMaskedKeysAccessor, TimeProvider)`; the existing constructor still works and uses `TimeProvider.System`.
 
 - `MaskedKeysStore`: a non-static, thread-safe `IMaskedKeysAccessor` with `Add`, `Remove`, `Clear` and `GetKeys` that returns immutable snapshots, and the builder extension `UseIsolatedMaskedKeys()`, which registers one store per host as the `IMaskedKeysAccessor` (replacing an earlier registration, in any order relative to `AddTjiddeLogger`). Inject `MaskedKeysStore` to add keys that apply immediately to that host's loggers only, so hosts and tests in one process no longer share runtime keys. The static `MaskedKeysContext` stays the default and now uses a `MaskedKeysStore` internally. The README, wikis and AI integration guide now recommend the accessors and DI for testable code and describe the static classes as the convenience variant.
 
@@ -19,6 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Samples: the Blazor, Avalonia and terminal samples use the built-in `InMemoryLogSink` instead of their own in-memory logger providers, recognize metrics entries by their event ID instead of the obsolete `Metrics` level, and log metrics with `LogMetrics`. The terminal sample turns the console off, so console output no longer draws over its UI.
 
 ### Changed
+- Dropped support for .NET 7. The package now targets `net8.0`, `net9.0` and `net10.0`.
 - Options changes now apply to existing loggers immediately, without a restart: the provider listens to `IOptionsMonitor<TjiddeLoggerOptions>.OnChange`, and `AddTjiddeLogger(IConfiguration)` / `AddTjiddeLogger(IConfigurationSection)` rebind the options when the configuration reloads (for example `appsettings.json` with `reloadOnChange`). Options, masker, exception formatter and OpenTelemetry fallback `ActivitySource` are replaced together, so a log call never mixes old and new settings; the previous `ActivitySource` is disposed.
 - `LogMetrics` now logs at `LogLevel.Information` with `MetricsEventId` instead of the custom level `(LogLevel)10`. Tjidde.Logging still shows these entries as `[METRICS]` and its own minimum level never drops them; other providers see a normal information entry. `LogMetrics(EventId, ...)` keeps the caller's event ID and only adds the name `Metrics` when it has none.
 - JSON output: object cycles in logged values are written as `null` instead of failing, and object graphs deeper than 32 levels fall back to `ToString()`.
@@ -38,7 +39,7 @@ Output is unchanged; see `benchmarks/README.md` for the measurements (new Benchm
 - A custom `IMaskedKeysAccessor` that returns the same mutable collection on every call: added or removed keys were not picked up after the first log call. The masker now compares the keys by content (only the immutable snapshots of `MaskedKeysContext` and `MaskedKeysStore` are compared by reference), builds from a copy, and no longer lets a concurrent rebuild overwrite a newer key set.
 
 ### Deprecated
-- `TjiddeLoggerOptions.MinimumLevel` and `TjiddeLoggerOptions.CategoryMinimumLevels` (`TjiddeLogger:MinimumLevel`, `TjiddeLogger:CategoryMinimumLevels`) are marked `[Obsolete]` and will be removed in 2.0. Use the standard filter `Logging:Tjidde:LogLevel` in `appsettings.json` (or `AddFilter<TjiddeLoggerProvider>(...)`) instead. They still work and are still bound from configuration: the `Logging` filters run first, then these, so the stricter level wins.
+- `TjiddeLoggerOptions.MinimumLevel` and `TjiddeLoggerOptions.CategoryMinimumLevels` (`TjiddeLogger:MinimumLevel`, `TjiddeLogger:CategoryMinimumLevels`) are marked `[Obsolete]` and will be removed in a future major version. Use the standard filter `Logging:Tjidde:LogLevel` in `appsettings.json` (or `AddFilter<TjiddeLoggerProvider>(...)`) instead. They still work and are still bound from configuration: the `Logging` filters run first, then these, so the stricter level wins.
 - `MetricsLoggerExtensions.Metrics` (`(LogLevel)10`): not a valid `LogLevel`, and other providers throw on it. Use `LogMetrics(...)`, or `System.Diagnostics.Metrics` for real application metrics. Tjidde.Logging still recognizes the value.
 
 ## [1.0.1] - 2026-10-02
