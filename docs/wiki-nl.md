@@ -28,7 +28,7 @@
 - Klantcontextpropagatie via `AsyncLocal` — veilig voor async/await en multi-tenant scenario's.
 - Scope-ondersteuning voor gestructureerde logging.
 - `LogMetrics` voor metric-achtige regels, weergegeven als `[METRICS]` naast reguliere logberichten.
-- Ondersteunt .NET 7, 8, 9 en 10.
+- Ondersteunt .NET 8, 9 en 10.
 
 ---
 

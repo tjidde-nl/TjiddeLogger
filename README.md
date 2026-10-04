@@ -20,12 +20,11 @@ Tjidde.Logging provides a consistent logging experience across .NET applications
 
 | Version  | Supported |
 |----------|-----------|
-| .NET 7   | ✅        |
 | .NET 8   | ✅        |
 | .NET 9   | ✅        |
 | .NET 10  | ✅        |
 
-> Multi-targeting (net7.0;net8.0;net9.0;net10.0) is configured in the package project and intended for CI builds where all SDKs are available.
+> Multi-targeting (net8.0;net9.0;net10.0) is configured in the package project and intended for CI builds where all SDKs are available.
 
 ---
 
@@ -89,7 +88,7 @@ Filter log levels with the standard `Logging` section of `appsettings.json`. `Lo
 
 In code, `builder.AddFilter<TjiddeLoggerProvider>("MyCompany.MyApp", LogLevel.Debug)` does the same.
 
-`TjiddeLoggerOptions.MinimumLevel` and `CategoryMinimumLevels` (`TjiddeLogger:MinimumLevel`, `TjiddeLogger:CategoryMinimumLevels`) are obsolete and will be removed in 2.0. They still work: the `Logging` filter runs first, then Tjidde's own filter, so an entry must pass both and the stricter level wins. Move these values to `Logging:Tjidde:LogLevel`.
+`TjiddeLoggerOptions.MinimumLevel` and `CategoryMinimumLevels` (`TjiddeLogger:MinimumLevel`, `TjiddeLogger:CategoryMinimumLevels`) are obsolete and will be removed in a future major version. They still work: the `Logging` filter runs first, then Tjidde's own filter, so an entry must pass both and the stricter level wins. Move these values to `Logging:Tjidde:LogLevel`.
 
 ### Accessors and DI (recommended)
 
@@ -244,8 +243,8 @@ YYYY-MM-DD: HH:mm:ss: [LEVEL] Class=>ClassName Method=>MethodName: Client=>Custo
 | `EnableSensitiveDataMasking` | `bool` | `true` | Apply sensitive data masking |
 | `MaskPlaceholder` | `string` | `[REDACTED]` | Replacement text for masked values |
 | `AdditionalSensitiveKeys` | `IList<string>` | `[]` | Extra keys to treat as sensitive |
-| `MinimumLevel` *(obsolete)* | `LogLevel` | `Trace` | Use `Logging:Tjidde:LogLevel` instead; removed in 2.0 |
-| `CategoryMinimumLevels` *(obsolete)* | `IDictionary<string, LogLevel>` | `{}` | Use `Logging:Tjidde:LogLevel` instead; removed in 2.0 |
+| `MinimumLevel` *(obsolete)* | `LogLevel` | `Trace` | Use `Logging:Tjidde:LogLevel` instead; will be removed in a future major version |
+| `CategoryMinimumLevels` *(obsolete)* | `IDictionary<string, LogLevel>` | `{}` | Use `Logging:Tjidde:LogLevel` instead; will be removed in a future major version |
 
 ---
 

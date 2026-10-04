@@ -28,7 +28,7 @@
 - Customer context propagation via `AsyncLocal` — safe for async/await and multi-tenant scenarios.
 - Scope support for structured logging.
 - `LogMetrics` for metric-style entries, shown as `[METRICS]` alongside regular log output.
-- Targets .NET 7, 8, 9, and 10.
+- Targets .NET 8, 9, and 10.
 
 ---
 
@@ -211,7 +211,7 @@ builder.Logging.AddFilter<TjiddeLoggerProvider>("MyCompany.MyApp.Services.OrderS
 
 These filters are reloaded with the configuration, like the other options.
 
-**Obsolete: `MinimumLevel` and `CategoryMinimumLevels`.** `TjiddeLogger:MinimumLevel` and `TjiddeLogger:CategoryMinimumLevels` duplicate the filters above and will be removed in 2.0. Until then they still work and are still bound from configuration. They run *after* the `Logging` filters, so an entry must pass both and the stricter level wins:
+**Obsolete: `MinimumLevel` and `CategoryMinimumLevels`.** `TjiddeLogger:MinimumLevel` and `TjiddeLogger:CategoryMinimumLevels` duplicate the filters above and will be removed in a future major version. Until then they still work and are still bound from configuration. They run *after* the `Logging` filters, so an entry must pass both and the stricter level wins:
 
 | `Logging:Tjidde:LogLevel:Default` | `TjiddeLogger:MinimumLevel` | Lowest level written |
 |---|---|---|
@@ -280,8 +280,8 @@ builder.Logging.AddTjiddeLogger(options =>
 |---|---|---|---|
 | `OutputFormat` | `TjiddeLogOutputFormat` | `Text` | Log rendering mode: `Text` or `Json` (Elasticsearch-friendly JSON line). |
 | `WriteToConsole` | `bool` | `true` | Writes entries to the console. `false` writes only to the registered [sinks](#sinks). |
-| `MinimumLevel` *(obsolete)* | `LogLevel` | `Trace` | Global minimum log level fallback when no category override matches. Use `Logging:Tjidde:LogLevel` instead; removed in 2.0. |
-| `CategoryMinimumLevels` *(obsolete)* | `IDictionary<string, LogLevel>` | `{}` | Category/namespace/class-specific minimum levels. Use `Logging:Tjidde:LogLevel` instead; removed in 2.0. |
+| `MinimumLevel` *(obsolete)* | `LogLevel` | `Trace` | Global minimum log level fallback when no category override matches. Use `Logging:Tjidde:LogLevel` instead; will be removed in a future major version. |
+| `CategoryMinimumLevels` *(obsolete)* | `IDictionary<string, LogLevel>` | `{}` | Category/namespace/class-specific minimum levels. Use `Logging:Tjidde:LogLevel` instead; will be removed in a future major version. |
 | `EnableOpenTelemetryExport` | `bool` | `false` | Emits each log as an OpenTelemetry event on the current `Activity` (for OTEL pipelines). |
 | `OpenTelemetryActivitySourceName` | `string` | `Tjidde.Logging` | Activity source name used for optional fallback activity creation. |
 | `OpenTelemetryCreateFallbackActivity` | `bool` | `false` | Creates a short-lived internal activity if no current `Activity` exists. |

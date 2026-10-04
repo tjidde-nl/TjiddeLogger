@@ -3,7 +3,8 @@ using Tjidde.Logging.TuiApp.Services;
 using Tjidde.Logging.TuiApp.Views;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Terminal.Gui;
+using Terminal.Gui.App;
+using Terminal.Gui.Views;
 
 namespace Tjidde.Logging.TuiApp;
 
@@ -11,23 +12,23 @@ class Program
 {
     static void Main(string[] args)
     {
-        InitializeTerminal();
+        using var app = Application.Create();
+        app.Init();
 
-        var services = ConfigureServices();
+        var services = ConfigureServices(app);
 
         var mainView = services.GetRequiredService<MainView>();
-        mainView.Build(Application.Top);
+        var root = new Window { Title = "Tjidde Logger TUI" };
+        mainView.Build(root);
 
-        Application.Run();
-        Application.Shutdown();
+        app.Run(root);
     }
 
-    private static ServiceProvider ConfigureServices()
+    private static ServiceProvider ConfigureServices(IApplication app)
     {
-        var colorScheme = CreateColorScheme();
         var services = new ServiceCollection();
 
-        services.AddSingleton(colorScheme);
+        services.AddSingleton(app);
         services.AddSingleton<ILogService, LogService>();
         services.AddSingleton<MainView>();
 
@@ -42,32 +43,4 @@ class Program
 
         return services.BuildServiceProvider();
     }
-
-    private static void InitializeTerminal()
-    {
-        Application.UseSystemConsole = true;
-        Application.Init();
-
-        Application.Top.WantMousePositionReports = false;
-        Application.Top.WantContinuousButtonPressed = false;
-
-        if (Application.Driver != null)
-        {
-            Console.Write("\x1b[?1000l");
-            Console.Write("\x1b[?1001l");
-            Console.Write("\x1b[?1002l");
-            Console.Write("\x1b[?1003l");
-        }
-
-        Application.RootMouseEvent = _ => { };
-    }
-
-    private static ColorScheme CreateColorScheme() => new()
-    {
-        Normal = Terminal.Gui.Attribute.Make(Color.White, Color.Black),
-        Focus = Terminal.Gui.Attribute.Make(Color.Black, Color.White),
-        HotNormal = Terminal.Gui.Attribute.Make(Color.BrightCyan, Color.Black),
-        HotFocus = Terminal.Gui.Attribute.Make(Color.BrightCyan, Color.White),
-        Disabled = Terminal.Gui.Attribute.Make(Color.DarkGray, Color.Black),
-    };
 }
